@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+    <head>
+        <script src="https://leeoniya.github.io/uPlot/dist/uPlot.iife.min.js"></script>
+        <link rel="shortcut icon" type="image/png" href="favicon.ico">
+        <link rel="stylesheet" href="https://leeoniya.github.io/uPlot/dist/uPlot.min.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r79/three.min.js"></script>
+        <style>
+            html {
+                font-family: Arial, Helvetica, sans-serif;
+            }
+            h1 {
+                font-size: 14pt;
+            }
+            .topblk {
+                float: left;
+                border: solid;
+                padding: 4px;
+                margin-bottom: 4px;
+                margin-right: 4px;
+                font-size: 12px;
+                height: 180px;
+            }
+            #procsel {
+                font-size: 18px;
+            }
+            .info {
+                font-size: 14px;
+                position: relative;
+                z-index: 0;
+                color: #066600;
+                border: 1px solid #0d3f00;
+                border-radius: 4px;
+                padding: 0 2px 0 2px;
+                margin: 0 2px 0 2px;
+                background-color: #ddd;
+                font-weight: 400;
+            }
+            /* New 3D Button Style */
+            .btn-3d {
+                font-size: 14px;
+                color: white;
+                background-color: #067a6a;
+                border: 1px solid #056356;
+                border-radius: 4px;
+                padding: 0 5px;
+                margin-left: 5px;
+                font-weight: bold;
+                text-decoration: none;
+                cursor: pointer;
+            }
+            .ttip {
+                display: none;
+                float: left;
+                font-family: "Courier New", Courier, monospace;
+            }
+            .info:hover {
+                z-index: 1;
+                background-color: white;
+            }
+            .info:hover .ttip {
+                z-index: 1;
+                display: block;
+                position: absolute;
+                top: 20px;
+                width: 620px;
+                border: 7px double #067a6a;
+                border-radius: 5px;
+                box-shadow: 7px 7px 9px 0px rgba(0, 0, 0, 0.75);
+                background-color: white;
+                color: black;
+                font-size: 12px;
+                font-style: normal;
+                line-height: 1.1em;
+                padding: 9px 27px 9px 27px;
+                text-align: justify;
+            }
+        </style>
+        <meta charset="utf-8" />
+    </head>
+    <body>
+		<div style="position: absolute; top: 10px; right: 20px; font-size: 14px; font-weight: bold;">
+    Source: <a href="https://github.com/zeyneddinoz/tubebend" target="_blank" style="color: #067a6a; text-decoration: underline;">TubeBEND</a>
+		</div>
+        <div id="toprow">
+            <div class="topblk"><video id="v0" tabindex="0", autobuffer width="320" height="180" muted webkit-playsinline playsinline>
+                <source id="vid" type='video/mp4;codecs="avc1.42E01E, mp4a.40.2"'></source>
+          </video></div>
+            <div>
+                <pre>  Process_ID: <input
+                    id="procsel"
+                    type="number"
+                    min="1"
+                    max="318"
+                    step="1"
+                    value="79"
+                /> <a class="info"
+                    >Machine Diagram<span class="ttip"><img src="overview.jpg"/></span></a
+                ><a href="https://rayan-yazdani.github.io/tube-visualization/" target="_blank" class="btn-3d">Open 3D Visualization</a></pre>
+
+                <pre id="infotext"></pre>
+            </div>
+        </div>
+        <script src="viz.js"></script>
+        <div style="clear: both"></div>
+    </body>
+</html>

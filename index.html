@@ -36,6 +36,19 @@
 				background-color: #ddd;
 				font-weight: 400;
 			}
+			/* New 3D Button Style */
+            .btn-3d {
+                font-size: 14px;
+                color: white;
+                background-color: #067a6a;
+                border: 1px solid #056356;
+                border-radius: 4px;
+                padding: 0 5px;
+                margin-left: 5px;
+                font-weight: bold;
+                text-decoration: none;
+                cursor: pointer;
+            }
 			.ttip {
 				display: none;
 				float: left;
@@ -66,6 +79,9 @@
 		<meta charset="utf-8" />
 	</head>
 	<body>
+		<div style="position: absolute; top: 10px; right: 20px; font-size: 14px; font-weight: bold;">
+    Source: <a href="https://github.com/zeyneddinoz/tubebend" target="_blank" style="color: #067a6a; text-decoration: underline;">TubeBEND</a>
+		</div>
 		<div id="toprow">
 			<div class="topblk"><video id="v0" tabindex="0", autobuffer width="320" height="180" muted webkit-playsinline playsinline>
 		        <source id="vid" type='video/mp4;codecs="avc1.42E01E, mp4a.40.2"'></source>
@@ -77,11 +93,10 @@
 					min="1"
 					max="318"
 					step="1"
-					value="1"
-					
+					value="79"
 				/> <a class="info"
 					>Machine Diagram<span class="ttip"><img src="overview.jpg"/></span></a
-				></pre>
+				><button id="geoBtn" type="button" class="btn-3d">Geometric Data</button></pre>
 
 				<pre id="infotext"></pre>
 			</div>

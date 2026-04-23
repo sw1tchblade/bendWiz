@@ -17,14 +17,6 @@ function clampProc(v) {
 	return Math.max(MIN_PROC, Math.min(MAX_PROC, n));
 }
 
-const geoBtn = d.getElementById("geoBtn");
-if (geoBtn) {
-	geoBtn.addEventListener("click", () => {
-		const n = clampProc(proc.value);
-		window.open(`geometry.html?prc=${n}`, "_blank");
-	});
-}
-
 function getProcFromURL() {
 	const params = new URLSearchParams(wl.search);
 

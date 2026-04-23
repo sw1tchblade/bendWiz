@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Geometry Data</title>
+	<script src="https://leeoniya.github.io/uPlot/dist/uPlot.iife.min.js"></script>
+	<link rel="stylesheet" href="https://leeoniya.github.io/uPlot/dist/uPlot.min.css">
+	<style>
+		html, body {
+			font-family: Arial, Helvetica, sans-serif;
+			margin: 0;
+			padding: 0;
+			background: #f5f5f5;
+		}
+		.topbar {
+			padding: 14px 16px 8px 16px;
+			background: white;
+			border-bottom: 1px solid #ccc;
+		}
+		.toprow {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			flex-wrap: wrap;
+		}
+		#plotsRoot {
+			display: grid;
+			grid-template-columns: 1fr;
+			gap: 16px;
+			padding: 16px;
+		}
+		.plot-panel {
+			position: relative;
+			border: 1px solid #aaa;
+			border-radius: 6px;
+			background: white;
+			padding: 10px 10px 4px 10px;
+		}
+		.plot-title {
+			font-size: 18px;
+			font-weight: 700;
+			margin: 0 0 8px 0;
+		}
+		.plot-legend {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: rgba(255,255,255,0.96);
+			border: 1px solid #bbb;
+			border-radius: 6px;
+			padding: 8px 10px;
+			font-size: 12px;
+			line-height: 1.35;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+			z-index: 20;
+		}
+		.plot-legend-row {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			margin: 2px 0;
+			white-space: nowrap;
+		}
+		.plot-legend-swatch {
+			width: 10px;
+			height: 10px;
+			border-radius: 2px;
+			display: inline-block;
+			flex: 0 0 10px;
+		}
+		.plot-tooltip {
+			position: absolute;
+			display: none;
+			pointer-events: none;
+			background: rgba(255,255,255,0.98);
+			border: 1px solid #666;
+			border-radius: 6px;
+			padding: 8px 10px;
+			font-size: 12px;
+			line-height: 1.35;
+			box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+			max-width: 420px;
+			z-index: 30;
+			white-space: nowrap;
+		}
+		.plot-tooltip-title {
+			font-weight: 700;
+			margin-bottom: 4px;
+		}
+		.plot-tooltip-row {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			margin: 2px 0;
+		}
+	</style>
+</head>
+<body>
+	<div class="topbar">
+		<div class="toprow">
+			<label for="procsel"><strong>Process_ID:</strong></label>
+			<input id="procsel" type="number" min="1" max="318" step="1" value="1">
+			<button id="goBtn">Go</button>
+			<button id="backBtn">Back to Main View</button>
+		</div>
+		<pre id="infoText"></pre>
+	</div>
+
+	<script src="geometry.js"></script>
+</body>
+</html>
