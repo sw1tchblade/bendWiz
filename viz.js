@@ -447,6 +447,8 @@ function getSeriesDefs() {
 			{ key: "mandrelAxMov", raw: numericArray(window.mandrelAxMov_raw), label: "Axial Movement", unit: "mm", color: "green" },
 		],
 		pressureDie: [
+			{ key: "pressLatLoad1", raw: numericArray(window.pressLatL1_raw), label: "Lateral Load 1", unit: "kN", color: "red" },
+    		{ key: "pressLatLoad2", raw: numericArray(window.pressLatL2_raw), label: "Lateral Load 2", unit: "kN", color: "darkred" },
 			{ key: "pressAxT", raw: numericArray(window.pressAxT_raw), label: "Axial Torque", unit: "%", color: "red" },
 			{ key: "pressLatT", raw: numericArray(window.pressLatT_raw), label: "Lateral Torque", unit: "%", color: "green" },
 			{ key: "pressLeftAxT", raw: numericArray(window.pressLeftAxT_raw), label: "Left Axial Torque", unit: "%", color: "blue" },
@@ -572,7 +574,7 @@ function plotData() {
 	bindVideoTracking();
 }
 
-loadScript(`dta${proc.value}.js`, plotData, function () {
+loadScript(`website_data/sensor_data/dta${proc.value}.js`, plotData, function () {
     const infoText = d.getElementById("infotext");
     const msg = `Data file for process ${proc.value} is unavailable or corrupted.`;
     
