@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Decoupled Analysis Lab</title>
+    <title>TubeBEND - Precision Analysis Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -50,14 +50,12 @@
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
     }
 
-    // New Decoupled Loading Logic
     function startAnalysis(id) {
-        // 1. Always load the data script for the graph
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
             initPlot(); 
-            checkStlAndInit3D(id); // Only then check if we can show 3D
+            checkStlAndInit3D(id);
         };
         document.head.appendChild(script);
     }
@@ -67,7 +65,7 @@
         try {
             const res = await fetch(stlPath, { method: 'HEAD' });
             if (res.ok) {
-                init3D(); // Valid STL found, build the 3D rings
+                init3D();
             } else {
                 document.getElementById("statusLabel").textContent += ` | NO STL FOUND`;
                 document.getElementById("viewer3d").innerHTML = 
@@ -152,16 +150,18 @@
         new uPlot({
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
-            axes: [{ label: "Index", stroke: "#fff" }, { label: "Value", stroke: "#fff" }],
+            axes: [{ label: "Path Index", stroke: "#fff" }, { label: "Normalized Value", stroke: "#fff" }],
             series: [{}, 
-                { label: "Sec", stroke: "red" }, { label: "Main", stroke: "blue" }, 
-                { label: "OOR", stroke: "green" }, { label: "Col", stroke: "purple" }
+                { label: "Secondary", stroke: "red" }, 
+                { label: "Main Axis", stroke: "blue" }, 
+                { label: "Out of Roundness", stroke: "green" }, 
+                { label: "Collapse", stroke: "purple" }
             ],
             hooks: {
                 setCursor: [u => {
                     const i = u.cursor.idx;
                     if (i == null) return;
-                    document.getElementById("hoverInfo").innerHTML = `<b>${comb.labs[i]}</b> | S: ${comb.sec[i].toFixed(2)} | M: ${comb.main[i].toFixed(2)} | O: ${comb.oor[i].toFixed(4)} | C: ${comb.col[i].toFixed(3)}`;
+                    document.getElementById("hoverInfo").innerHTML = `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
                 }]
             }
         }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
