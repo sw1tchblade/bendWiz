@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Slim Ring Analysis</title>
+    <title>TubeBEND - Decoupled Analysis Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -13,7 +13,7 @@
         .header-controls { display: flex; align-items: center; gap: 20px; background: #1a1a1a; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
         .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); }
         .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; }
-        #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
+        #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; display: flex; align-items: center; justify-content: center; }
         #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
         h2 { margin: 0 0 10px 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
         button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
@@ -50,18 +50,28 @@
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
     }
 
-    async function checkAndLoad(id) {
+    // New Decoupled Loading Logic
+    function startAnalysis(id) {
+        // 1. Always load the data script for the graph
+        const script = document.createElement("script");
+        script.src = `website_data/geometry_data/geo${id}.js`;
+        script.onload = () => {
+            initPlot(); 
+            checkStlAndInit3D(id); // Only then check if we can show 3D
+        };
+        document.head.appendChild(script);
+    }
+
+    async function checkStlAndInit3D(id) {
         const stlPath = `website_data/stl_models/SIM_V12-${id}_geometry_after_springback.stl`;
         try {
             const res = await fetch(stlPath, { method: 'HEAD' });
             if (res.ok) {
-                const script = document.createElement("script");
-                script.src = `website_data/geometry_data/geo${id}.js`;
-                script.onload = () => { init3D(); initPlot(); };
-                document.head.appendChild(script);
+                init3D(); // Valid STL found, build the 3D rings
             } else {
-                document.getElementById("statusLabel").textContent = `MISSING STL: ID ${id}`;
-                document.getElementById("viewer3d").innerHTML = "<div style='color:#444; padding:50px; text-align:center;'>Analysis blocked: No STL found for this ID.</div>";
+                document.getElementById("statusLabel").textContent += ` | NO STL FOUND`;
+                document.getElementById("viewer3d").innerHTML = 
+                    "<div style='color:#555; text-align:center;'>3D View Disabled<br><small>Missing STL Scan</small></div>";
             }
         } catch (e) { console.error(e); }
     }
@@ -88,7 +98,6 @@
         
         document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${(angleRad * 180 / Math.PI).toFixed(1)}°`;
 
-        // Updated for Slimmer Appearance
         const spacing = 0.4;
         const thickness = 0.08; 
         const ringGeom = new THREE.TorusGeometry(tubeR, thickness, 8, 32);
@@ -107,20 +116,17 @@
         }
 
         drawRings(new THREE.LineCurve3(new THREE.Vector3(0, tubeR, 0), new THREE.Vector3(L1, tubeR, 0)), 0xffffff);
-        
         const arcPts = [];
         for(let i=0; i <= 50; i++) {
             const r = (i / 50) * angleRad;
             arcPts.push(new THREE.Vector3(L1 + bendR * Math.sin(r), tubeR, -bendR + bendR * Math.cos(r)));
         }
         drawRings(new THREE.CatmullRomCurve3(arcPts), 0xffff00);
-
         const last = arcPts[arcPts.length-1];
         drawRings(new THREE.LineCurve3(last, new THREE.Vector3(last.x + L2 * Math.cos(angleRad), tubeR, last.z - L2 * Math.sin(angleRad))), 0xffffff);
 
-        const pivot = new THREE.Vector3(L1, 0, -bendR);
         camera.position.set(L1 + 350, 350, 350);
-        controls.target.copy(pivot);
+        controls.target.set(L1, 0, -bendR);
         controls.update();
 
         function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
@@ -147,7 +153,10 @@
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
             axes: [{ label: "Index", stroke: "#fff" }, { label: "Value", stroke: "#fff" }],
-            series: [{}, { label: "Sec", stroke: "red" }, { label: "Main", stroke: "blue" }, { label: "OOR", stroke: "green" }, { label: "Col", stroke: "purple" }],
+            series: [{}, 
+                { label: "Sec", stroke: "red" }, { label: "Main", stroke: "blue" }, 
+                { label: "OOR", stroke: "green" }, { label: "Col", stroke: "purple" }
+            ],
             hooks: {
                 setCursor: [u => {
                     const i = u.cursor.idx;
@@ -159,7 +168,7 @@
     }
 
     document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
-    checkAndLoad(currentId);
+    startAnalysis(currentId);
 </script>
 </body>
 </html>
