@@ -2,23 +2,22 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Precision Geometry & STL View</title>
+    <title>TubeBEND - Slim Ring Analysis</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
     
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #0f0f0f; color: #e0e0e0; margin: 0; padding: 20px; overflow: hidden; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; margin: 0; padding: 20px; overflow: hidden; }
         .header-controls { display: flex; align-items: center; gap: 20px; background: #1a1a1a; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
         .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); }
         .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; }
         #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
-        #hoverInfo { font-family: 'Consolas', monospace; color: #ffffff; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
-        h2 { margin: 0 0 10px 0; font-size: 13px; color: #00a896; text-transform: uppercase; }
-        button { background: #00a896; color: #fff; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
-        input { background: #222; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 60px; }
+        #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
+        h2 { margin: 0 0 10px 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
+        button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
+        input { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
     </style>
 </head>
 <body>
@@ -26,18 +25,17 @@
 <div class="header-controls">
     <label><b>PROCESS ID:</b></label>
     <input type="number" id="prcInput" min="1" max="318">
-    <button id="goBtn">Update View</button>
-    <button onclick="window.location.href='index.html'">Back</button>
+    <button id="goBtn">Analyze Process</button>
     <div id="statusLabel" style="margin-left: auto; color: #00a896; font-weight: bold;"></div>
 </div>
 
 <div class="dashboard-grid">
     <div class="panel">
-        <h2>3D Simulation Model (STL)</h2>
+        <h2>3D Slim-Ring Reconstruction</h2>
         <div id="viewer3d"></div>
     </div>
     <div class="panel">
-        <div id="hoverInfo">Hover over graph to inspect raw values</div>
+        <div id="hoverInfo">Hover over graph to inspect metrics</div>
         <div id="plot"></div>
     </div>
 </div>
@@ -52,15 +50,20 @@
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
     }
 
-    function loadScript(id) {
-        const script = document.createElement("script");
-        script.src = `website_data/geometry_data/geo${id}.js`;
-        script.onload = () => {
-            document.getElementById("statusLabel").textContent = `EXP_${id}`;
-            init3D();
-            initPlot();
-        };
-        document.head.appendChild(script);
+    async function checkAndLoad(id) {
+        const stlPath = `website_data/stl_models/SIM_V12-${id}_geometry_after_springback.stl`;
+        try {
+            const res = await fetch(stlPath, { method: 'HEAD' });
+            if (res.ok) {
+                const script = document.createElement("script");
+                script.src = `website_data/geometry_data/geo${id}.js`;
+                script.onload = () => { init3D(); initPlot(); };
+                document.head.appendChild(script);
+            } else {
+                document.getElementById("statusLabel").textContent = `MISSING STL: ID ${id}`;
+                document.getElementById("viewer3d").innerHTML = "<div style='color:#444; padding:50px; text-align:center;'>Analysis blocked: No STL found for this ID.</div>";
+            }
+        } catch (e) { console.error(e); }
     }
 
     function init3D() {
@@ -73,117 +76,90 @@
         container.appendChild(renderer.domElement);
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
+        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
-        // Lighting & Scene Environment
-        scene.add(new THREE.AmbientLight(0x404040, 2)); 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-        dirLight.position.set(100, 200, 100);
-        scene.add(dirLight);
-        scene.add(new THREE.GridHelper(1000, 100, 0x333333, 0x222222));
+        const tubeR = window.tube_radius || 11.15;
+        const bendR = 40; 
+        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
+        const ArcL = geo_arc.x[geo_arc.x.length - 1];
+        const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
+        const angleRad = ArcL / bendR;
+        
+        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${(angleRad * 180 / Math.PI).toFixed(1)}°`;
 
-        const loader = new THREE.STLLoader();
-        const radius = window.tube_radius || 11.15;
+        // Updated for Slimmer Appearance
+        const spacing = 0.4;
+        const thickness = 0.08; 
+        const ringGeom = new THREE.TorusGeometry(tubeR, thickness, 8, 32);
 
-        // Helper to load STL with hollow look and ground alignment
-        const loadModel = (file, color, opacity) => {
-            loader.load(`website_data/stl_models/${file}`, (geometry) => {
-                const material = new THREE.MeshPhongMaterial({ 
-                    color: color, 
-                    transparent: true, 
-                    opacity: opacity,
-                    side: THREE.DoubleSide // Essential for hollow look
-                });
-                const mesh = new THREE.Mesh(geometry, material);
-                
-                // Rotation and elevation to lay flat on plane
-                mesh.rotation.x = -Math.PI / 2;
-                mesh.position.y = radius; 
-                
-                scene.add(mesh);
-            });
-        };
+        function drawRings(curve, color) {
+            const len = curve.getLength();
+            const count = Math.floor(len / spacing);
+            for(let i=0; i <= count; i++) {
+                const p = curve.getPointAt(i / count);
+                const t = curve.getTangentAt(i / count);
+                const ring = new THREE.Mesh(ringGeom, new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }));
+                ring.position.copy(p);
+                ring.lookAt(p.clone().add(t));
+                scene.add(ring);
+            }
+        }
 
-        // Load before/after springback states
-        loadModel('geometry_before_springback.stl', 0x067a6a, 0.4); 
-        loadModel('geometry_after_springback.stl', 0x00ffcc, 1.0);  
+        drawRings(new THREE.LineCurve3(new THREE.Vector3(0, tubeR, 0), new THREE.Vector3(L1, tubeR, 0)), 0xffffff);
+        
+        const arcPts = [];
+        for(let i=0; i <= 50; i++) {
+            const r = (i / 50) * angleRad;
+            arcPts.push(new THREE.Vector3(L1 + bendR * Math.sin(r), tubeR, -bendR + bendR * Math.cos(r)));
+        }
+        drawRings(new THREE.CatmullRomCurve3(arcPts), 0xffff00);
 
-        // Center markers
-        const l1_idx = (typeof geo_linear_1 !== 'undefined') ? geo_linear_1.x.length : 0;
-        const bendOrigin = (window.tube_path_3d) ? 
-            new THREE.Vector3(tube_path_3d.x[l1_idx], radius, tube_path_3d.z[l1_idx]) : 
-            new THREE.Vector3(0, radius, 0);
+        const last = arcPts[arcPts.length-1];
+        drawRings(new THREE.LineCurve3(last, new THREE.Vector3(last.x + L2 * Math.cos(angleRad), tubeR, last.z - L2 * Math.sin(angleRad))), 0xffffff);
 
-        const axisPoints = [new THREE.Vector3(bendOrigin.x, 0, bendOrigin.z), new THREE.Vector3(bendOrigin.x, 300, bendOrigin.z)];
-        scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(axisPoints), new THREE.LineBasicMaterial({ color: 0x00ff00 })));
-
-        camera.position.set(400, 400, 400);
-        controls.target.copy(bendOrigin);
+        const pivot = new THREE.Vector3(L1, 0, -bendR);
+        camera.position.set(L1 + 350, 350, 350);
+        controls.target.copy(pivot);
         controls.update();
 
-        function animate() { 
-            requestAnimationFrame(animate); 
-            controls.update();
-            renderer.render(scene, camera); 
-        }
+        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
         animate();
     }
 
     function initPlot() {
         const target = document.getElementById("plot");
         target.innerHTML = "";
-        const combined = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
-        let offset = 0;
+        const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
+        let count = 0;
         [geo_linear_1, geo_arc, geo_linear_2].forEach(s => {
             s.x.forEach((v, i) => {
-                combined.x.push(offset + i);
-                combined.sec.push(s.secondary_axis[i] || 0);
-                combined.main.push(s.main_axis[i] || 0);
-                combined.oor.push(s.out_of_roundness[i] || 0);
-                combined.col.push(s.collapse[i] || 0);
-                combined.labs.push(s.section_name);
+                comb.x.push(count++);
+                comb.sec.push(s.secondary_axis[i] || 0);
+                comb.main.push(s.main_axis[i] || 0);
+                comb.oor.push(s.out_of_roundness[i] || 0);
+                comb.col.push(s.collapse[i] || 0);
+                comb.labs.push(s.section_name);
             });
-            offset += s.x.length;
         });
 
-        const opts = {
+        new uPlot({
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
-            axes: [
-                { 
-                    label: "Combined Path Index", 
-                    stroke: "#ffffff", // Pure White
-                    grid: { stroke: "#444" } 
-                },
-                { 
-                    label: "Normalized Value", 
-                    stroke: "#ffffff", // Pure White
-                    grid: { stroke: "#444" } 
-                }
-            ],
-            series: [
-                {},
-                { label: "Secondary", stroke: "red" }, { label: "Main", stroke: "blue" },
-                { label: "OOR", stroke: "green" }, { label: "Collapse", stroke: "purple" }
-            ],
+            axes: [{ label: "Index", stroke: "#fff" }, { label: "Value", stroke: "#fff" }],
+            series: [{}, { label: "Sec", stroke: "red" }, { label: "Main", stroke: "blue" }, { label: "OOR", stroke: "green" }, { label: "Col", stroke: "purple" }],
             hooks: {
                 setCursor: [u => {
-                    const idx = u.cursor.idx;
-                    if (idx == null) return;
-                    document.getElementById("hoverInfo").innerHTML = 
-                        `<span style="color:#00a896; font-weight:bold">${combined.labs[idx]}</span> | ` +
-                        `Sec: ${combined.sec[idx].toFixed(3)} | Main: ${combined.main[idx].toFixed(3)} | ` +
-                        `OOR: ${combined.oor[idx].toFixed(4)} | Col: ${combined.col[idx].toFixed(3)}`;
+                    const i = u.cursor.idx;
+                    if (i == null) return;
+                    document.getElementById("hoverInfo").innerHTML = `<b>${comb.labs[i]}</b> | S: ${comb.sec[i].toFixed(2)} | M: ${comb.main[i].toFixed(2)} | O: ${comb.oor[i].toFixed(4)} | C: ${comb.col[i].toFixed(3)}`;
                 }]
             }
-        };
-        new uPlot(opts, [combined.x, normalize(combined.sec), normalize(combined.main), normalize(combined.oor), normalize(combined.col)], target);
+        }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
     }
 
-    loadScript(currentId);
-    document.getElementById("goBtn").onclick = () => {
-        window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
-    };
+    document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
+    checkAndLoad(currentId);
 </script>
 </body>
 </html>
