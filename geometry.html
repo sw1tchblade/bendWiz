@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Precision Analysis Lab</title>
+    <title>TubeBEND - Continuous Ovality Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -13,7 +13,7 @@
         .header-controls { display: flex; align-items: center; gap: 20px; background: #1a1a1a; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
         .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); }
         .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; }
-        #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; display: flex; align-items: center; justify-content: center; }
+        #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
         #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
         h2 { margin: 0 0 10px 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
         button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
@@ -31,7 +31,7 @@
 
 <div class="dashboard-grid">
     <div class="panel">
-        <h2>3D Reconstruction</h2>
+        <h2>Continuous 3D Geometric Reconstruction</h2>
         <div id="viewer3d"></div>
     </div>
     <div class="panel">
@@ -45,6 +45,13 @@
     let currentId = params.get("prc") || "79";
     document.getElementById("prcInput").value = currentId;
 
+    let globalCurve; 
+    let highlightRing; 
+    let totalPointsCount = 0;
+
+    let combinedMainAxis = [];
+    let combinedSecondaryAxis = [];
+
     function normalize(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
@@ -54,24 +61,14 @@
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
+            combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
+            combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
+            totalPointsCount = combinedMainAxis.length;
+
+            init3D();
             initPlot(); 
-            checkStlAndInit3D(id);
         };
         document.head.appendChild(script);
-    }
-
-    async function checkStlAndInit3D(id) {
-        const stlPath = `website_data/stl_models/SIM_V12-${id}_geometry_after_springback.stl`;
-        try {
-            const res = await fetch(stlPath, { method: 'HEAD' });
-            if (res.ok) {
-                init3D();
-            } else {
-                document.getElementById("statusLabel").textContent += ` | NO STL FOUND`;
-                document.getElementById("viewer3d").innerHTML = 
-                    "<div style='color:#555; text-align:center;'>3D View Disabled<br><small>Missing STL Scan</small></div>";
-            }
-        } catch (e) { console.error(e); }
     }
 
     function init3D() {
@@ -84,10 +81,10 @@
         container.appendChild(renderer.domElement);
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
+        scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+        scene.add(new THREE.GridHelper(1000, 50, 0x444444, 0x222222));
 
-        const tubeR = window.tube_radius || 11.15;
+        const baseRadius = window.tube_radius || 11.0;
         const bendR = 40; 
         const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
         const ArcL = geo_arc.x[geo_arc.x.length - 1];
@@ -96,32 +93,75 @@
         
         document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${(angleRad * 180 / Math.PI).toFixed(1)}°`;
 
-        const spacing = 0.4;
-        const thickness = 0.08; 
-        const ringGeom = new THREE.TorusGeometry(tubeR, thickness, 8, 32);
-
-        function drawRings(curve, color) {
-            const len = curve.getLength();
-            const count = Math.floor(len / spacing);
-            for(let i=0; i <= count; i++) {
-                const p = curve.getPointAt(i / count);
-                const t = curve.getTangentAt(i / count);
-                const ring = new THREE.Mesh(ringGeom, new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }));
-                ring.position.copy(p);
-                ring.lookAt(p.clone().add(t));
-                scene.add(ring);
-            }
+        const pathPoints = [];
+        pathPoints.push(new THREE.Vector3(0, baseRadius, 0));
+        pathPoints.push(new THREE.Vector3(L1, baseRadius, 0));
+        
+        const arcSteps = geo_arc.x.length;
+        for(let i=0; i < arcSteps; i++) {
+            const r = (geo_arc.x[i] / ArcL) * angleRad;
+            pathPoints.push(new THREE.Vector3(L1 + bendR * Math.sin(r), baseRadius, -bendR + bendR * Math.cos(r)));
         }
+        const lastArc = pathPoints[pathPoints.length - 1];
+        pathPoints.push(new THREE.Vector3(lastArc.x + L2 * Math.cos(angleRad), baseRadius, lastArc.z - L2 * Math.sin(angleRad)));
 
-        drawRings(new THREE.LineCurve3(new THREE.Vector3(0, tubeR, 0), new THREE.Vector3(L1, tubeR, 0)), 0xffffff);
-        const arcPts = [];
-        for(let i=0; i <= 50; i++) {
-            const r = (i / 50) * angleRad;
-            arcPts.push(new THREE.Vector3(L1 + bendR * Math.sin(r), tubeR, -bendR + bendR * Math.cos(r)));
+        globalCurve = new THREE.CatmullRomCurve3(pathPoints);
+
+        // Create one single unified tube mesh piece
+        const tubeSegments = 120; 
+        const radialSegments = 32;
+        const tubeGeom = new THREE.TubeGeometry(globalCurve, tubeSegments, baseRadius, radialSegments, false);
+        
+        // Deform vertices of unified piece directly to match physical measurements
+        const posAttribute = tubeGeom.attributes.position;
+        const normalsAttribute = tubeGeom.attributes.normal;
+        
+        for (let i = 0; i < posAttribute.count; i++) {
+            // Find which segment step along length this vertex belongs to
+            const segmentIndex = Math.floor(i / (radialSegments + 1));
+            const pct = segmentIndex / tubeSegments;
+            const dataIndex = Math.min(Math.floor(pct * totalPointsCount), totalPointsCount - 1);
+
+            // Calculate scaling factors relative to nominal diameter
+            const scaleX = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
+            const scaleY = combinedMainAxis[dataIndex] / (baseRadius * 2);
+
+            // Get normal vector to deform outward elliptically from centerline
+            let nx = normalsAttribute.getX(i);
+            let ny = normalsAttribute.getY(i);
+
+            let vx = posAttribute.getX(i);
+            let vy = posAttribute.getY(i);
+
+            // Apply direct coordinate adjustment to unified wall geometry
+            posAttribute.setX(i, vx + (scaleX - 1) * nx * baseRadius);
+            posAttribute.setY(i, vy + (scaleY - 1) * ny * baseRadius);
         }
-        drawRings(new THREE.CatmullRomCurve3(arcPts), 0xffff00);
-        const last = arcPts[arcPts.length-1];
-        drawRings(new THREE.LineCurve3(last, new THREE.Vector3(last.x + L2 * Math.cos(angleRad), tubeR, last.z - L2 * Math.sin(angleRad))), 0xffffff);
+        
+        tubeGeom.computeVertexNormals();
+
+        const tubeMat = new THREE.MeshPhongMaterial({ 
+            color: 0x00ffcc, 
+            transparent: true, 
+            opacity: 0.4, 
+            side: THREE.DoubleSide
+        });
+        const tubeMesh = new THREE.Mesh(tubeGeom, tubeMat);
+        scene.add(tubeMesh);
+
+        // High visibility clean wireframe skin
+        const wireframe = new THREE.LineSegments(
+            new THREE.WireframeGeometry(tubeGeom),
+            new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.15 })
+        );
+        tubeMesh.add(wireframe);
+
+        // Interactive tracking indicator circle
+        const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.3, 0.4, 8, 32);
+        const trackerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        highlightRing = new THREE.Mesh(trackerGeom, trackerMat);
+        highlightRing.visible = false; 
+        scene.add(highlightRing);
 
         camera.position.set(L1 + 350, 350, 350);
         controls.target.set(L1, 0, -bendR);
@@ -136,6 +176,7 @@
         target.innerHTML = "";
         const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
         let count = 0;
+        
         [geo_linear_1, geo_arc, geo_linear_2].forEach(s => {
             s.x.forEach((v, i) => {
                 comb.x.push(count++);
@@ -151,17 +192,40 @@
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
             axes: [{ label: "Path Index", stroke: "#fff" }, { label: "Normalized Value", stroke: "#fff" }],
-            series: [{}, 
-                { label: "Secondary", stroke: "red" }, 
-                { label: "Main Axis", stroke: "blue" }, 
-                { label: "Out of Roundness", stroke: "green" }, 
-                { label: "Collapse", stroke: "purple" }
+            series: [
+                {}, 
+                { label: "Secondary", stroke: "red", width: 2 }, 
+                { label: "Main Axis", stroke: "blue", width: 2 }, 
+                { label: "Out of Roundness", stroke: "green", width: 2 }, 
+                { 
+                    label: "Collapse", 
+                    stroke: "purple", 
+                    width: 2,
+                    // Add a dash pattern so the underlying blue line is visible
+                    dash: [8, 5] 
+                }
             ],
             hooks: {
                 setCursor: [u => {
                     const i = u.cursor.idx;
-                    if (i == null) return;
+                    if (i == null || !globalCurve || !highlightRing) {
+                        if (highlightRing) highlightRing.visible = false;
+                        return;
+                    }
+                    
                     document.getElementById("hoverInfo").innerHTML = `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
+                    
+                    highlightRing.visible = true;
+                    const progress = i / (totalPointsCount - 1);
+                    const position = globalCurve.getPointAt(progress);
+                    const tangent = globalCurve.getTangentAt(progress);
+                    
+                    highlightRing.position.copy(position);
+                    highlightRing.lookAt(position.clone().add(tangent));
+
+                    const scaleX = combinedSecondaryAxis[i] / (11.0 * 2);
+                    const scaleY = combinedMainAxis[i] / (11.0 * 2);
+                    highlightRing.scale.set(scaleX, scaleY, 1.0);
                 }]
             }
         }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
