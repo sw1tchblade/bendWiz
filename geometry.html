@@ -175,8 +175,8 @@
             const warningColor = new THREE.Color(0xff3333); // Structural Defect Red
             
             // Smooth out transition curve
-            const smoothFactor = Math.pow(normalizedDeviation, 2.5); 
-            baseColor.lerp(warningColor, smoothFactor);
+            // const smoothFactor = Math.pow(normalizedDeviation, 2.5); 
+            // baseColor.lerp(warningColor, smoothFactor);
 
             colorsAttribute.setXYZ(i, baseColor.r, baseColor.g, baseColor.b);
         }
