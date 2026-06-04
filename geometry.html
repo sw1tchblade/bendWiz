@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Continuous Ovality Lab</title>
+    <title>TubeBEND - Smooth Heatmap Analysis</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -15,8 +15,11 @@
         .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; }
         #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
         #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
-        h2 { margin: 0 0 10px 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        h2 { margin: 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
         button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
+        .toggle-btn { background: #333; font-size: 11px; padding: 4px 10px; }
+        .toggle-btn:hover { background: #444; }
         input { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
     </style>
 </head>
@@ -31,7 +34,10 @@
 
 <div class="dashboard-grid">
     <div class="panel">
-        <h2>3D Reconstruction</h2>
+        <div class="panel-header">
+            <h2>3D Construction</h2>
+            <button class="toggle-btn" id="opacityBtn" onclick="toggleOpacity()">Make Opaque</button>
+        </div>
         <div id="viewer3d"></div>
     </div>
     <div class="panel">
@@ -47,10 +53,12 @@
 
     let globalCurve; 
     let highlightRing; 
+    let tubeMaterial;
     let totalPointsCount = 0;
 
     let combinedMainAxis = [];
     let combinedSecondaryAxis = [];
+    let combinedCollapse = [];
 
     function normalize(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
@@ -63,12 +71,28 @@
         script.onload = () => {
             combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
             combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
+            combinedCollapse = [...geo_linear_1.collapse, ...geo_arc.collapse, ...geo_linear_2.collapse];
             totalPointsCount = combinedMainAxis.length;
 
             init3D();
             initPlot(); 
         };
         document.head.appendChild(script);
+    }
+
+    function toggleOpacity() {
+        if (!tubeMaterial) return;
+        const btn = document.getElementById("opacityBtn");
+        if (tubeMaterial.transparent) {
+            tubeMaterial.transparent = false;
+            tubeMaterial.opacity = 1.0;
+            btn.textContent = "Make Translucent";
+        } else {
+            tubeMaterial.transparent = true;
+            tubeMaterial.opacity = 0.45;
+            btn.textContent = "Make Opaque";
+        }
+        tubeMaterial.needsUpdate = true;
     }
 
     function init3D() {
@@ -81,8 +105,12 @@
         container.appendChild(renderer.domElement);
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        scene.add(new THREE.AmbientLight(0xffffff, 1.4));
-        scene.add(new THREE.GridHelper(1000, 50, 0x444444, 0x222222));
+        
+        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(200, 400, 300);
+        scene.add(dirLight);
+        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
         const baseRadius = window.tube_radius || 11.0;
         const bendR = 40; 
@@ -107,63 +135,79 @@
 
         globalCurve = new THREE.CatmullRomCurve3(pathPoints);
 
-        // Create one single unified tube mesh piece
-        const tubeSegments = 120; 
-        const radialSegments = 32;
+        const tubeSegments = 160; 
+        const radialSegments = 40;
         const tubeGeom = new THREE.TubeGeometry(globalCurve, tubeSegments, baseRadius, radialSegments, false);
         
-        // Deform vertices of unified piece directly to match physical measurements
+        tubeGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tubeGeom.attributes.position.count * 3), 3));
+        const colorsAttribute = tubeGeom.attributes.color;
         const posAttribute = tubeGeom.attributes.position;
         const normalsAttribute = tubeGeom.attributes.normal;
+
+        // Calculate absolute bounds of collapse data for linear gradient interpolation
+        const absCollapseArr = combinedCollapse.map(v => Math.abs(v));
+        const maxCollapse = Math.max(...absCollapseArr);
+        const minCollapse = Math.min(...absCollapseArr);
+        const collapseRange = maxCollapse - minCollapse || 1;
         
         for (let i = 0; i < posAttribute.count; i++) {
-            // Find which segment step along length this vertex belongs to
             const segmentIndex = Math.floor(i / (radialSegments + 1));
             const pct = segmentIndex / tubeSegments;
             const dataIndex = Math.min(Math.floor(pct * totalPointsCount), totalPointsCount - 1);
 
-            // Calculate scaling factors relative to nominal diameter
             const scaleX = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
             const scaleY = combinedMainAxis[dataIndex] / (baseRadius * 2);
 
-            // Get normal vector to deform outward elliptically from centerline
             let nx = normalsAttribute.getX(i);
             let ny = normalsAttribute.getY(i);
-
             let vx = posAttribute.getX(i);
             let vy = posAttribute.getY(i);
 
-            // Apply direct coordinate adjustment to unified wall geometry
             posAttribute.setX(i, vx + (scaleX - 1) * nx * baseRadius);
             posAttribute.setY(i, vy + (scaleY - 1) * ny * baseRadius);
+
+            // Calculate precise normalized deformation weight (0.0 to 1.0)
+            const currentAbsCollapse = Math.abs(combinedCollapse[dataIndex] || 0);
+            const normalizedDeviation = (currentAbsCollapse - minCollapse) / collapseRange;
+
+            // Generate clean color transition using linear interpolation
+            const baseColor = new THREE.Color(0x00ffcc); // Healthy Cyan
+            const warningColor = new THREE.Color(0xff3333); // Structural Defect Red
+            
+            // Smooth out transition curve
+            const smoothFactor = Math.pow(normalizedDeviation, 2.5); 
+            baseColor.lerp(warningColor, smoothFactor);
+
+            colorsAttribute.setXYZ(i, baseColor.r, baseColor.g, baseColor.b);
         }
         
         tubeGeom.computeVertexNormals();
 
-        const tubeMat = new THREE.MeshPhongMaterial({ 
-            color: 0x00ffcc, 
+        tubeMaterial = new THREE.MeshStandardMaterial({ 
+            vertexColors: true, 
+            metalness: 0.7,
+            roughness: 0.3,
             transparent: true, 
-            opacity: 0.4, 
+            opacity: 0.45, 
             side: THREE.DoubleSide
         });
-        const tubeMesh = new THREE.Mesh(tubeGeom, tubeMat);
+        
+        const tubeMesh = new THREE.Mesh(tubeGeom, tubeMaterial);
         scene.add(tubeMesh);
 
-        // High visibility clean wireframe skin
         const wireframe = new THREE.LineSegments(
             new THREE.WireframeGeometry(tubeGeom),
-            new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.15 })
+            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 })
         );
         tubeMesh.add(wireframe);
 
-        // Interactive tracking indicator circle
         const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.3, 0.4, 8, 32);
         const trackerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
         highlightRing = new THREE.Mesh(trackerGeom, trackerMat);
         highlightRing.visible = false; 
         scene.add(highlightRing);
 
-        camera.position.set(L1 + 350, 350, 350);
+        camera.position.set(L1 + 320, 280, 320);
         controls.target.set(L1, 0, -bendR);
         controls.update();
 
@@ -194,15 +238,13 @@
             axes: [{ label: "Path Index", stroke: "#fff" }, { label: "Normalized Value", stroke: "#fff" }],
             series: [
                 {}, 
-                { label: "Secondary", stroke: "red", width: 2 }, 
-                { label: "Main Axis", stroke: "blue", width: 2 }, 
-                { label: "Out of Roundness", stroke: "green", width: 2 }, 
+                { label: "Secondary", stroke: "red" }, 
+                { label: "Main Axis", stroke: "blue" }, 
+                { label: "Out of Roundness", stroke: "green" }, 
                 { 
                     label: "Collapse", 
-                    stroke: "purple", 
-                    width: 2,
-                    // Add a dash pattern so the underlying blue line is visible
-                    dash: [8, 5] 
+                    stroke: "purple",
+                    dash: [8, 5] // Exposes the blue series lines hidden underneath
                 }
             ],
             hooks: {
