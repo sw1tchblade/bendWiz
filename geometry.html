@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Smooth Heatmap Analysis</title>
+    <title>TubeBEND - Integrated Dashboard</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -11,8 +11,8 @@
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; margin: 0; padding: 20px; overflow: hidden; }
         .header-controls { display: flex; align-items: center; gap: 20px; background: #1a1a1a; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
-        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); }
-        .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); width: 100%; }
+        .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; min-width: 0; }
         #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
         #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
         .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -51,10 +51,12 @@
     let currentId = params.get("prc") || "79";
     document.getElementById("prcInput").value = currentId;
 
+    // Global layout tokens managed across update lifecycles
     let globalCurve; 
     let highlightRing; 
     let tubeMaterial;
     let totalPointsCount = 0;
+    let camera, renderer, scene, plotInstance;
 
     let combinedMainAxis = [];
     let combinedSecondaryAxis = [];
@@ -98,9 +100,9 @@
     function init3D() {
         const container = document.getElementById("viewer3d");
         container.innerHTML = "";
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
+        renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
         container.appendChild(renderer.domElement);
 
@@ -144,7 +146,6 @@
         const posAttribute = tubeGeom.attributes.position;
         const normalsAttribute = tubeGeom.attributes.normal;
 
-        // Calculate absolute bounds of collapse data for linear gradient interpolation
         const absCollapseArr = combinedCollapse.map(v => Math.abs(v));
         const maxCollapse = Math.max(...absCollapseArr);
         const minCollapse = Math.min(...absCollapseArr);
@@ -166,15 +167,13 @@
             posAttribute.setX(i, vx + (scaleX - 1) * nx * baseRadius);
             posAttribute.setY(i, vy + (scaleY - 1) * ny * baseRadius);
 
-            // Calculate precise normalized deformation weight (0.0 to 1.0)
+            // Re-instating the smooth warning color gradient calculations
             const currentAbsCollapse = Math.abs(combinedCollapse[dataIndex] || 0);
             const normalizedDeviation = (currentAbsCollapse - minCollapse) / collapseRange;
 
-            // Generate clean color transition using linear interpolation
-            const baseColor = new THREE.Color(0x00ffcc); // Healthy Cyan
-            const warningColor = new THREE.Color(0xff3333); // Structural Defect Red
+            const baseColor = new THREE.Color(0x00ffcc); 
+            const warningColor = new THREE.Color(0xff3333); 
             
-            // Smooth out transition curve
             // const smoothFactor = Math.pow(normalizedDeviation, 2.5); 
             // baseColor.lerp(warningColor, smoothFactor);
 
@@ -232,7 +231,7 @@
             });
         });
 
-        new uPlot({
+        plotInstance = new uPlot({
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
             axes: [{ label: "Path Index", stroke: "#fff" }, { label: "Normalized Value", stroke: "#fff" }],
@@ -241,11 +240,7 @@
                 { label: "Secondary", stroke: "red" }, 
                 { label: "Main Axis", stroke: "blue" }, 
                 { label: "Out of Roundness", stroke: "green" }, 
-                { 
-                    label: "Collapse", 
-                    stroke: "purple",
-                    dash: [8, 5] // Exposes the blue series lines hidden underneath
-                }
+                { label: "Collapse", stroke: "purple", dash: [8, 5] }
             ],
             hooks: {
                 setCursor: [u => {
@@ -272,6 +267,26 @@
             }
         }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
     }
+
+    // Handles browser window modifications cleanly to secure alignment layouts
+    window.addEventListener('resize', () => {
+        const container3d = document.getElementById("viewer3d");
+        if (camera && renderer && container3d) {
+            const width = container3d.clientWidth;
+            const height = container3d.clientHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        const containerPlot = document.getElementById("plot");
+        if (plotInstance && containerPlot) {
+            plotInstance.setSize({
+                width: containerPlot.clientWidth,
+                height: 500
+            });
+        }
+    });
 
     document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
     startAnalysis(currentId);
