@@ -110,6 +110,318 @@
         scene.add(new THREE.AmbientLight(0xffffff, 0.5));
         scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
+        const headlight = new THREE.DirectionalLight(0xffffff, 1.0);
+        headlight.position.set(0, 0, 1);
+        camera.add(headlight);
+        scene.add(camera);
+
+        const baseRadius = window.tube_radius || 11.0;
+        
+        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
+        const ArcL = geo_arc.x[geo_arc.x.length - 1];
+        const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
+        
+        const finalArcY = geo_arc.y ? geo_arc.y[geo_arc.y.length - 1] : 13.06;
+        const bendR = finalArcY > 0 ? (ArcL / (Math.asin(finalArcY / ArcL) * 2)) : 33.0;
+        const angleRad = ArcL / bendR;
+        
+        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${(angleRad * 180 / Math.PI).toFixed(1)}°`;
+
+        const pathPoints = [];
+        pathPoints.push(new THREE.Vector3(0, baseRadius, 0));
+        pathPoints.push(new THREE.Vector3(L1, baseRadius, 0));
+        
+        const arcSteps = geo_arc.x.length;
+        for(let i=0; i < arcSteps; i++) {
+            const r = (geo_arc.x[i] / ArcL) * angleRad;
+            pathPoints.push(new THREE.Vector3(L1 + bendR * Math.sin(r), baseRadius, -bendR + bendR * Math.cos(r)));
+        }
+        
+        const lastArc = pathPoints[pathPoints.length - 1];
+        pathPoints.push(new THREE.Vector3(lastArc.x + L2 * Math.cos(angleRad), baseRadius, lastArc.z - L2 * Math.sin(angleRad)));
+
+        globalCurve = new THREE.CatmullRomCurve3(pathPoints);
+        globalCurve.curveType = 'centripetal';
+
+        // FIX 1: Dynamically set segments to total points count to completely eliminate corruption in 59 & 250
+        const tubeSegments = totalPointsCount; 
+        const radialSegments = 40;
+        const tubeGeom = new THREE.TubeGeometry(globalCurve, tubeSegments, baseRadius, radialSegments, false);
+        
+        tubeGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tubeGeom.attributes.position.count * 3), 3));
+        const colorsAttribute = tubeGeom.attributes.color;
+        const posAttribute = tubeGeom.attributes.position;
+
+        // FIX 2: Generate true 90-degree reference frames along the path to eliminate the horizontal partition seam
+        const frames = globalCurve.computeFrenetFrames(tubeSegments, false);
+        
+        for (let i = 0; i < posAttribute.count; i++) {
+            const segmentIndex = Math.floor(i / (radialSegments + 1));
+            const radialIndex = i % (radialSegments + 1);
+            const dataIndex = Math.min(segmentIndex, totalPointsCount - 1);
+
+            // True cross-sectional mechanical diameter scales
+            const scaleX = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
+            const scaleY = combinedMainAxis[dataIndex] / (baseRadius * 2);
+
+            // Compute precise parametric angular rotation around the tube core path
+            const v = (radialIndex / radialSegments) * Math.PI * 2;
+            const cx = -baseRadius * Math.cos(v) * scaleX; 
+            const cy = baseRadius * Math.sin(v) * scaleY;
+
+            // Project vertices precisely along the orthogonal Frenet vectors
+            const pos = globalCurve.getPointAt(segmentIndex / tubeSegments);
+            const normal = frames.normals[segmentIndex];
+            const binormal = frames.binormals[segmentIndex];
+
+            posAttribute.setX(i, pos.x + cx * normal.x + cy * binormal.x);
+            posAttribute.setY(i, pos.y + cx * normal.y + cy * binormal.y);
+            posAttribute.setZ(i, pos.z + cx * normal.z + cy * binormal.z);
+
+            const baseColor = new THREE.Color(0x00ffcc); 
+            colorsAttribute.setXYZ(i, baseColor.r, baseColor.g, baseColor.b);
+        }
+        
+        tubeGeom.computeVertexNormals();
+
+        tubeMaterial = new THREE.MeshStandardMaterial({ 
+            vertexColors: true, 
+            metalness: 0.5, 
+            roughness: 0.4, 
+            transparent: true, 
+            opacity: 0.45, 
+            side: THREE.DoubleSide
+        });
+        
+        const tubeMesh = new THREE.Mesh(tubeGeom, tubeMaterial);
+        scene.add(tubeMesh);
+
+        const wireframe = new THREE.LineSegments(
+            new THREE.WireframeGeometry(tubeGeom),
+            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 })
+        );
+        tubeMesh.add(wireframe);
+
+        const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.3, 0.4, 8, 32);
+        const trackerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        highlightRing = new THREE.Mesh(trackerGeom, trackerMat);
+        highlightRing.visible = false; 
+        scene.add(highlightRing);
+
+        camera.position.set(L1 + 320, 280, 320);
+        controls.target.set(L1, 0, -bendR);
+        controls.update();
+
+        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+        animate();
+    }
+
+    function initPlot() {
+        const target = document.getElementById("plot");
+        target.innerHTML = "";
+
+        function reverseArray(arr) {
+            return arr.slice().reverse();
+        }
+
+        const linear1_rev = {
+            x: reverseArray(geo_linear_1.x),
+            secondary_axis: reverseArray(geo_linear_1.secondary_axis),
+            main_axis: reverseArray(geo_linear_1.main_axis),
+            out_of_roundness: reverseArray(geo_linear_1.out_of_roundness),
+            collapse: reverseArray(geo_linear_1.collapse),
+            section_name: geo_linear_1.section_name
+        };
+
+        const sections = [linear1_rev, geo_arc, geo_linear_2];
+        let count = 0;
+        const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
+
+        for (let s of sections) {
+            const len = s.x.length;
+            for (let i = 0; i < len; i++) {
+                comb.x.push(count++);
+                comb.sec.push(s.secondary_axis[i] !== undefined ? s.secondary_axis[i] : 0);
+                comb.main.push(s.main_axis[i] !== undefined ? s.main_axis[i] : 0);
+                comb.oor.push(s.out_of_roundness[i] !== undefined ? s.out_of_roundness[i] : 0);
+                comb.col.push(s.collapse[i] !== undefined ? s.collapse[i] : 0);
+                comb.labs.push(s.section_name);
+            }
+        }
+
+        plotInstance = new uPlot({
+            width: target.clientWidth, height: 500,
+            scales: { x: { time: false }, y: { range: [0, 1.1] } },
+            axes: [{ label: "Path Index", stroke: "#fff" }, { label: "Normalized Value", stroke: "#fff" }],
+            series: [
+                {}, 
+                { label: "Secondary", stroke: "red", width: 2 }, 
+                { label: "Main Axis", stroke: "yellow", width: 2 }, 
+                { label: "Out of Roundness", stroke: "green", width: 2 }, 
+                { label: "Collapse", stroke: "#cc33ff", width: 2, dash: [8, 5] }
+            ],
+            hooks: {
+                setCursor: [u => {
+                    const i = u.cursor.idx;
+                    if (i == null || !globalCurve || !highlightRing) {
+                        if (highlightRing) highlightRing.visible = false;
+                        return;
+                    }
+                    
+                    document.getElementById("hoverInfo").innerHTML = 
+                        `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
+                    
+                    highlightRing.visible = true;
+                    const progress = i / (totalPointsCount - 1);
+                    const position = globalCurve.getPointAt(progress);
+                    const tangent = globalCurve.getTangentAt(progress);
+                    
+                    highlightRing.position.copy(position);
+                    highlightRing.lookAt(position.clone().add(tangent));
+
+                    const scaleX = combinedSecondaryAxis[i] / (11.0 * 2);
+                    const scaleY = combinedMainAxis[i] / (11.0 * 2);
+                    highlightRing.scale.set(scaleX, scaleY, 1.0);
+                }]
+            }
+        }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
+    }
+
+    window.addEventListener('resize', () => {
+        const container3d = document.getElementById("viewer3d");
+        if (camera && renderer && container3d) {
+            const width = container3d.clientWidth;
+            const height = container3d.clientHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        const containerPlot = document.getElementById("plot");
+        if (plotInstance && containerPlot) {
+            plotInstance.setSize({
+                width: containerPlot.clientWidth,
+                height: 500
+            });
+        }
+    });
+
+    document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
+    startAnalysis(currentId);
+</script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TubeBEND - Continuous Ovality Lab</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
+    
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; margin: 0; padding: 20px; overflow: hidden; }
+        .header-controls { display: flex; align-items: center; gap: 20px; background: #1a1a1a; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); width: 100%; }
+        .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; min-width: 0; }
+        #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
+        #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        h2 { margin: 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
+        button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
+        .toggle-btn { background: #333; font-size: 11px; padding: 4px 10px; }
+        .toggle-btn:hover { background: #444; }
+        input { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
+    </style>
+</head>
+<body>
+
+<div class="header-controls">
+    <label><b>PROCESS ID:</b></label>
+    <input type="number" id="prcInput" min="1" max="318">
+    <button id="goBtn">Analyze Process</button>
+    <div id="statusLabel" style="margin-left: auto; color: #00a896; font-weight: bold;"></div>
+</div>
+
+<div class="dashboard-grid">
+    <div class="panel">
+        <div class="panel-header">
+            <h2>3D Reconstruction</h2>
+            <button class="toggle-btn" id="opacityBtn" onclick="toggleOpacity()">Make Opaque</button>
+        </div>
+        <div id="viewer3d"></div>
+    </div>
+    <div class="panel">
+        <div id="hoverInfo">Hover over graph to inspect metrics</div>
+        <div id="plot"></div>
+    </div>
+</div>
+
+<script>
+    const params = new URLSearchParams(window.location.search);
+    let currentId = params.get("prc") || "79";
+    document.getElementById("prcInput").value = currentId;
+
+    let globalCurve; 
+    let highlightRing; 
+    let tubeMaterial;
+    let totalPointsCount = 0;
+    let camera, renderer, scene, plotInstance;
+
+    let combinedMainAxis = [];
+    let combinedSecondaryAxis = [];
+    let combinedCollapse = [];
+
+    function normalize(arr) {
+        const min = Math.min(...arr), max = Math.max(...arr);
+        return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
+    }
+
+    function startAnalysis(id) {
+        const script = document.createElement("script");
+        script.src = `website_data/geometry_data/geo${id}.js`;
+        script.onload = () => {
+            combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
+            combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
+            combinedCollapse = [...geo_linear_1.collapse, ...geo_arc.collapse, ...geo_linear_2.collapse];
+            totalPointsCount = combinedMainAxis.length;
+
+            init3D();    
+            initPlot();  
+        };
+        document.head.appendChild(script);
+    }
+
+    function toggleOpacity() {
+        if (!tubeMaterial) return;
+        const btn = document.getElementById("opacityBtn");
+        if (tubeMaterial.transparent) {
+            tubeMaterial.transparent = false;
+            tubeMaterial.opacity = 1.0;
+            btn.textContent = "Make Translucent";
+        } else {
+            tubeMaterial.transparent = true;
+            tubeMaterial.opacity = 0.45;
+            btn.textContent = "Make Opaque";
+        }
+        tubeMaterial.needsUpdate = true;
+    }
+
+    function init3D() {
+        const container = document.getElementById("viewer3d");
+        container.innerHTML = "";
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
+
         // Camera-attached headlight system to follow tracking movements dynamically
         const headlight = new THREE.DirectionalLight(0xffffff, 1.0);
         headlight.position.set(0, 0, 1);
