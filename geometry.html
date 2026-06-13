@@ -107,15 +107,14 @@
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         
-        // Soft ambient base lighting to eliminate pure pitch black zones
         scene.add(new THREE.AmbientLight(0xffffff, 0.5));
         scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
-        // Create the headlight and add it directly to the camera object
+        // Camera-attached headlight system to follow tracking movements dynamically
         const headlight = new THREE.DirectionalLight(0xffffff, 1.0);
-        headlight.position.set(0, 0, 1); // Shoots straight forward along the camera's line of sight
+        headlight.position.set(0, 0, 1);
         camera.add(headlight);
-        scene.add(camera); // Must add camera to scene for child lights to render correctly
+        scene.add(camera);
 
         const baseRadius = window.tube_radius || 11.0;
         
@@ -154,11 +153,6 @@
         const posAttribute = tubeGeom.attributes.position;
         const normalsAttribute = tubeGeom.attributes.normal;
 
-        const absCollapseArr = combinedCollapse.map(v => Math.abs(v));
-        const maxCollapse = Math.max(...absCollapseArr);
-        const minCollapse = Math.min(...absCollapseArr);
-        const collapseRange = maxCollapse - minCollapse || 1;
-        
         for (let i = 0; i < posAttribute.count; i++) {
             const segmentIndex = Math.floor(i / (radialSegments + 1));
             const pct = segmentIndex / tubeSegments;
@@ -183,8 +177,8 @@
 
         tubeMaterial = new THREE.MeshStandardMaterial({ 
             vertexColors: true, 
-            metalness: 0.5, // Reduced slightly to avoid harsh glare from headlamp focus
-            roughness: 0.4, // Increased roughness slightly for cleaner shading transitions
+            metalness: 0.5, 
+            roughness: 0.4, 
             transparent: true, 
             opacity: 0.45, 
             side: THREE.DoubleSide
