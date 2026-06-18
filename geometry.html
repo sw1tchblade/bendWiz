@@ -162,14 +162,19 @@
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         
         scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
+        
+        const baseRadius = window.tube_radius || 11.0;
+
+        // FIX: Adjust floor grid helper vertically by baseRadius to keep the tube sitting flush on top
+        const floorGrid = new THREE.GridHelper(1000, 50, 0x333333, 0x222222);
+        floorGrid.position.y = -baseRadius;
+        scene.add(floorGrid);
 
         const headlight = new THREE.DirectionalLight(0xffffff, 1.2);
         headlight.position.set(0, 0, 1);
         camera.add(headlight);
         scene.add(camera);
 
-        const baseRadius = window.tube_radius || 11.0;
         const tubeSegments = totalPointsCount - 1; 
         const radialSegments = 40;
         
@@ -210,7 +215,6 @@
         
         tubeGeom.computeVertexNormals();
 
-        // restored the high gloss glass aesthetic using professional clearcoat properties
         tubeMaterial = new THREE.MeshPhysicalMaterial({ 
             vertexColors: true, 
             metalness: 0.6,
