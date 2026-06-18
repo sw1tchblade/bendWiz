@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Integrated Dashboard</title>
+    <title>TubeBEND - Continuous Ovality Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -35,8 +35,8 @@
 <div class="dashboard-grid">
     <div class="panel">
         <div class="panel-header">
-            <h2>3D Construction</h2>
-            <button class="toggle-btn" id="opacityBtn">Make Opaque</button>
+            <h2>3D Reconstruction</h2>
+            <button class="toggle-btn" id="opacityBtn" onclick="toggleOpacity()">Make Opaque</button>
         </div>
         <div id="viewer3d"></div>
     </div>
@@ -51,8 +51,6 @@
     let currentId = params.get("prc") || "79";
     document.getElementById("prcInput").value = currentId;
 
-    // Global references
-    let globalCurve; 
     let highlightRing; 
     let tubeMaterial;
     let totalPointsCount = 0;
@@ -61,6 +59,9 @@
     let combinedMainAxis = [];
     let combinedSecondaryAxis = [];
     let combinedCollapse = [];
+    
+    let calculatedPositions = [];
+    let calculatedTangents = [];
 
     function normalize(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
@@ -71,15 +72,67 @@
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
-            combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
-            combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
-            combinedCollapse = [...geo_linear_1.collapse, ...geo_arc.collapse, ...geo_linear_2.collapse];
+            const l1_main_rev = [...geo_linear_1.main_axis].reverse();
+            const l1_sec_rev = [...geo_linear_1.secondary_axis].reverse();
+            const l1_col_rev = [...geo_linear_1.collapse].reverse();
+
+            combinedMainAxis = [...l1_main_rev, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
+            combinedSecondaryAxis = [...l1_sec_rev, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
+            combinedCollapse = [...l1_col_rev, ...geo_arc.collapse, ...geo_linear_2.collapse];
             totalPointsCount = combinedMainAxis.length;
 
-            init3D();
-            initPlot(); 
+            buildSynchronizedPath();
+            init3D();    
+            initPlot();  
         };
         document.head.appendChild(script);
+    }
+
+    function buildSynchronizedPath() {
+        calculatedPositions = [];
+        calculatedTangents = [];
+
+        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
+        const ArcL = geo_arc.x[geo_arc.x.length - 1];
+        const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
+        
+        const finalArcY = geo_arc.y ? geo_arc.y[geo_arc.y.length - 1] : 12.63;
+        const finalArcX = geo_arc.x_coord ? geo_arc.x_coord[geo_arc.x_coord.length - 1] : 131.70;
+        const deltaX = finalArcX - L1;
+        const angleRad = deltaX > 0 ? Math.atan2(finalArcY, deltaX) * 2 : (45 * Math.PI / 180);
+        const bendR = ArcL / angleRad;
+
+        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${(angleRad * 180 / Math.PI).toFixed(1)}°`;
+
+        const len1 = geo_linear_1.x.length;
+        for (let i = 0; i < len1; i++) {
+            const dist = (i / (len1 - 1)) * L1;
+            calculatedPositions.push(new THREE.Vector3(dist, 0, 0));
+            calculatedTangents.push(new THREE.Vector3(1, 0, 0));
+        }
+
+        const lenArc = geo_arc.x.length;
+        for (let i = 0; i < lenArc; i++) {
+            const r = (geo_arc.x[i] / ArcL) * angleRad;
+            const pos = new THREE.Vector3(L1 + bendR * Math.sin(r), 0, -bendR + bendR * Math.cos(r));
+            const tan = new THREE.Vector3(Math.cos(r), 0, -Math.sin(r)).normalize();
+            calculatedPositions.push(pos);
+            calculatedTangents.push(tan);
+        }
+
+        const len2 = geo_linear_2.x.length;
+        const arcEndPos = calculatedPositions[calculatedPositions.length - 1];
+        const exitTan = calculatedTangents[calculatedTangents.length - 1];
+        for (let i = 0; i < len2; i++) {
+            const dist = (i / (len2 - 1)) * L2;
+            const pos = new THREE.Vector3(
+                arcEndPos.x + dist * exitTan.x,
+                0,
+                arcEndPos.z + dist * exitTan.z
+            );
+            calculatedPositions.push(pos);
+            calculatedTangents.push(exitTan);
+        }
     }
 
     function toggleOpacity() {
@@ -109,99 +162,61 @@
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         
         scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        dirLight.position.set(200, 400, 300);
-        scene.add(dirLight);
         scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
+        const headlight = new THREE.DirectionalLight(0xffffff, 1.2);
+        headlight.position.set(0, 0, 1);
+        camera.add(headlight);
+        scene.add(camera);
+
         const baseRadius = window.tube_radius || 11.0;
-        const bendR = 40;   // Bend radius (mm) – must match the export script
-        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
-        const ArcL = geo_arc.x[geo_arc.x.length - 1];
-        const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
-        
-        // Original arc formula (uses ArcL as distance along arc)
-        const angleRad = ArcL / bendR;
-        const maxAngleDeg = angleRad * 180 / Math.PI;
-        
-        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${maxAngleDeg.toFixed(1)}°`;
-
-        const pathPoints = [];
-        // Linear 1
-        pathPoints.push(new THREE.Vector3(0, baseRadius, 0));
-        pathPoints.push(new THREE.Vector3(L1, baseRadius, 0));
-        
-        // Only draw arc if the angle is significant (> 1°)
-        if (maxAngleDeg > 1.0) {
-            const arcSteps = geo_arc.x.length;
-            for (let i = 0; i < arcSteps; i++) {
-                const t = geo_arc.x[i] / ArcL;               // 0..1 along the arc
-                const rad = t * angleRad;                    // angle in radians
-                const x = L1 + bendR * Math.sin(rad);
-                const z = -bendR + bendR * Math.cos(rad);
-                pathPoints.push(new THREE.Vector3(x, baseRadius, z));
-            }
-        }
-        
-        const lastArc = pathPoints[pathPoints.length - 1];
-        // Linear 2 – direction tangent to arc end (or straight if no arc)
-        const exitDirX = (maxAngleDeg > 1.0) ? Math.cos(angleRad) : 1.0;
-        const exitDirZ = (maxAngleDeg > 1.0) ? -Math.sin(angleRad) : 0;
-        pathPoints.push(new THREE.Vector3(
-            lastArc.x + L2 * exitDirX,
-            baseRadius,
-            lastArc.z + L2 * exitDirZ
-        ));
-
-        globalCurve = new THREE.CatmullRomCurve3(pathPoints);
-
-        // Tube mesh generation (unchanged)
-        const tubeSegments = 160; 
+        const tubeSegments = totalPointsCount - 1; 
         const radialSegments = 40;
-        const tubeGeom = new THREE.TubeGeometry(globalCurve, tubeSegments, baseRadius, radialSegments, false);
+        
+        const pathSpline = new THREE.CatmullRomCurve3(calculatedPositions);
+        pathSpline.curveType = 'centripetal';
+        
+        const tubeGeom = new THREE.TubeGeometry(pathSpline, tubeSegments, baseRadius, radialSegments, false);
         
         tubeGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tubeGeom.attributes.position.count * 3), 3));
         const colorsAttribute = tubeGeom.attributes.color;
         const posAttribute = tubeGeom.attributes.position;
-        const normalsAttribute = tubeGeom.attributes.normal;
 
-        const absCollapseArr = combinedCollapse.map(v => Math.abs(v));
-        const maxCollapse = Math.max(...absCollapseArr);
-        const minCollapse = Math.min(...absCollapseArr);
-        const collapseRange = maxCollapse - minCollapse || 1;
-        
         for (let i = 0; i < posAttribute.count; i++) {
             const segmentIndex = Math.floor(i / (radialSegments + 1));
-            const pct = segmentIndex / tubeSegments;
-            const dataIndex = Math.min(Math.floor(pct * totalPointsCount), totalPointsCount - 1);
+            const radialIndex = i % (radialSegments + 1);
+            const dataIndex = Math.min(segmentIndex, totalPointsCount - 1);
 
             const scaleX = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
             const scaleY = combinedMainAxis[dataIndex] / (baseRadius * 2);
+            const v = (radialIndex / radialSegments) * Math.PI * 2;
+            
+            const pos = calculatedPositions[dataIndex];
+            const tangent = calculatedTangents[dataIndex];
 
-            let nx = normalsAttribute.getX(i);
-            let ny = normalsAttribute.getY(i);
-            let vx = posAttribute.getX(i);
-            let vy = posAttribute.getY(i);
+            const normX = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+            const normY = new THREE.Vector3(0, 1, 0);
 
-            posAttribute.setX(i, vx + (scaleX - 1) * nx * baseRadius);
-            posAttribute.setY(i, vy + (scaleY - 1) * ny * baseRadius);
+            const offsetX = baseRadius * Math.cos(v) * scaleX;
+            const offsetY = baseRadius * Math.sin(v) * scaleY;
 
-            // Color mapping (collapse gradient – currently disabled)
-            const currentAbsCollapse = Math.abs(combinedCollapse[dataIndex] || 0);
-            const normalizedDeviation = (currentAbsCollapse - minCollapse) / collapseRange;
+            posAttribute.setX(i, pos.x + offsetX * normX.x);
+            posAttribute.setY(i, pos.y + offsetY * normY.y);
+            posAttribute.setZ(i, pos.z + offsetX * normX.z);
+
             const baseColor = new THREE.Color(0x00ffcc); 
-            const warningColor = new THREE.Color(0xff3333); 
-            // const smoothFactor = Math.pow(normalizedDeviation, 2.5);
-            // baseColor.lerp(warningColor, smoothFactor);
             colorsAttribute.setXYZ(i, baseColor.r, baseColor.g, baseColor.b);
         }
         
         tubeGeom.computeVertexNormals();
 
-        tubeMaterial = new THREE.MeshStandardMaterial({ 
+        // restored the high gloss glass aesthetic using professional clearcoat properties
+        tubeMaterial = new THREE.MeshPhysicalMaterial({ 
             vertexColors: true, 
-            metalness: 0.7,
-            roughness: 0.3,
+            metalness: 0.6,
+            roughness: 0.15,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.1,
             transparent: true, 
             opacity: 0.45, 
             side: THREE.DoubleSide
@@ -222,8 +237,9 @@
         highlightRing.visible = false; 
         scene.add(highlightRing);
 
+        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
         camera.position.set(L1 + 320, 280, 320);
-        controls.target.set(L1, 0, -bendR);
+        controls.target.set(L1, 0, -50);
         controls.update();
 
         function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
@@ -234,7 +250,6 @@
         const target = document.getElementById("plot");
         target.innerHTML = "";
 
-        // Reverse Linear 1 data for graphing only
         function reverseArray(arr) {
             return arr.slice().reverse();
         }
@@ -271,24 +286,26 @@
             series: [
                 {}, 
                 { label: "Secondary", stroke: "red", width: 2 }, 
-                { label: "Main Axis", stroke: "blue", width: 2 }, 
+                { label: "Main Axis", stroke: "yellow", width: 2 }, 
                 { label: "Out of Roundness", stroke: "green", width: 2 }, 
-                { label: "Collapse", stroke: "purple", width: 2, dash: [8, 5] }
+                { label: "Collapse", stroke: "#cc33ff", width: 2, dash: [8, 5] }
             ],
             hooks: {
                 setCursor: [u => {
                     const i = u.cursor.idx;
-                    if (i == null || !globalCurve || !highlightRing) {
+                    if (i == null || !highlightRing || !calculatedPositions[i]) {
                         if (highlightRing) highlightRing.visible = false;
                         return;
                     }
+                    
                     document.getElementById("hoverInfo").innerHTML = 
                         `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
                     
                     highlightRing.visible = true;
-                    const progress = i / (totalPointsCount - 1);
-                    const position = globalCurve.getPointAt(progress);
-                    const tangent = globalCurve.getTangentAt(progress);
+                    
+                    const position = calculatedPositions[i];
+                    const tangent = calculatedTangents[i];
+                    
                     highlightRing.position.copy(position);
                     highlightRing.lookAt(position.clone().add(tangent));
 
@@ -300,7 +317,6 @@
         }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
     }
 
-    // Resize handling
     window.addEventListener('resize', () => {
         const container3d = document.getElementById("viewer3d");
         if (camera && renderer && container3d) {
@@ -321,7 +337,6 @@
     });
 
     document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
-    document.getElementById("opacityBtn").onclick = toggleOpacity;
     startAnalysis(currentId);
 </script>
 </body>
