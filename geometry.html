@@ -115,13 +115,14 @@
         scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
         const baseRadius = window.tube_radius || 11.0;
-        const bendR = 40;   // Bend radius (mm) – must match the value used in export
+        const bendR = 40;   // Bend radius (mm) – must match the export script
         const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
+        const ArcL = geo_arc.x[geo_arc.x.length - 1];
         const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
         
-        // --- Correct arc angle from geo_arc.x ---
-        const maxAngleDeg = geo_arc.x[geo_arc.x.length - 1];   // total bend angle in degrees
-        const totalRad = maxAngleDeg * Math.PI / 180;          // convert to radians
+        // Original arc formula (uses ArcL as distance along arc)
+        const angleRad = ArcL / bendR;
+        const maxAngleDeg = angleRad * 180 / Math.PI;
         
         document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${maxAngleDeg.toFixed(1)}°`;
 
@@ -130,20 +131,22 @@
         pathPoints.push(new THREE.Vector3(0, baseRadius, 0));
         pathPoints.push(new THREE.Vector3(L1, baseRadius, 0));
         
-        // Arc – correct parametric circle
-        const arcSteps = geo_arc.x.length;
-        for (let i = 0; i < arcSteps; i++) {
-            const t = geo_arc.x[i] / maxAngleDeg;          // 0..1 along the arc
-            const rad = t * totalRad;                      // angle in radians
-            const x = L1 + bendR * Math.sin(rad);
-            const z = -bendR + bendR * Math.cos(rad);
-            pathPoints.push(new THREE.Vector3(x, baseRadius, z));
+        // Only draw arc if the angle is significant (> 1°)
+        if (maxAngleDeg > 1.0) {
+            const arcSteps = geo_arc.x.length;
+            for (let i = 0; i < arcSteps; i++) {
+                const t = geo_arc.x[i] / ArcL;               // 0..1 along the arc
+                const rad = t * angleRad;                    // angle in radians
+                const x = L1 + bendR * Math.sin(rad);
+                const z = -bendR + bendR * Math.cos(rad);
+                pathPoints.push(new THREE.Vector3(x, baseRadius, z));
+            }
         }
         
         const lastArc = pathPoints[pathPoints.length - 1];
-        // Linear 2 – direction tangent to arc end
-        const exitDirX = Math.cos(totalRad);
-        const exitDirZ = -Math.sin(totalRad);
+        // Linear 2 – direction tangent to arc end (or straight if no arc)
+        const exitDirX = (maxAngleDeg > 1.0) ? Math.cos(angleRad) : 1.0;
+        const exitDirZ = (maxAngleDeg > 1.0) ? -Math.sin(angleRad) : 0;
         pathPoints.push(new THREE.Vector3(
             lastArc.x + L2 * exitDirX,
             baseRadius,
@@ -152,7 +155,7 @@
 
         globalCurve = new THREE.CatmullRomCurve3(pathPoints);
 
-        // High resolution tube mesh (unchanged)
+        // Tube mesh generation (unchanged)
         const tubeSegments = 160; 
         const radialSegments = 40;
         const tubeGeom = new THREE.TubeGeometry(globalCurve, tubeSegments, baseRadius, radialSegments, false);
