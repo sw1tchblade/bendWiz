@@ -51,13 +51,12 @@
     let currentId = params.get("prc") || "79";
     document.getElementById("prcInput").value = currentId;
 
-    // Global references
-    let globalCurve; 
     let highlightRing; 
     let tubeMaterial;
     let totalPointsCount = 0;
     let camera, renderer, scene, plotInstance, controls;
-    let globalPathPoints = []; // store the 3D path points used to build the curve
+    let pathPointsArray = [];
+    let baseRadius = 11.0;  // will be set from data
 
     let combinedMainAxis = [];
     let combinedSecondaryAxis = [];
@@ -72,10 +71,14 @@
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
+            // Load data
             combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
             combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
             combinedCollapse = [...geo_linear_1.collapse, ...geo_arc.collapse, ...geo_linear_2.collapse];
             totalPointsCount = combinedMainAxis.length;
+
+            // Use the exported cross-section radius
+            baseRadius = window.cross_section_radius || 11.0;
 
             init3D();
             initPlot(); 
@@ -115,47 +118,24 @@
         scene.add(dirLight);
         scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
 
-        const baseRadius = window.cross_section_radius || 11.0;
-        const bendR = 45.0;
-        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
-        const ArcL = geo_arc.x[geo_arc.x.length - 1];
-        const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
-        const totalRad = ArcL * Math.PI / 180;
-        const displayAngle = window.bend_angle_deg !== undefined ? window.bend_angle_deg : ArcL;
-        
-        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${displayAngle.toFixed(1)}°`;
+        const pts = window.tube_path_3d;
+        if (!pts || !pts.x || pts.x.length < 2) {
+            container.innerHTML = "<div style='color:red; padding:20px;'>No 3D path data available</div>";
+            return;
+        }
 
-        // Build path in physical order and store globally
-        const pathPoints = [];
-        const l1_dist = geo_linear_1.x;
-        for (let d of l1_dist) {
-            pathPoints.push(new THREE.Vector3(d, baseRadius, 0));
+        pathPointsArray = [];
+        for (let i = 0; i < pts.x.length; i++) {
+            pathPointsArray.push(new THREE.Vector3(pts.x[i], pts.y[i], pts.z[i]));
         }
-        const arcAngles = geo_arc.x;
-        for (let deg of arcAngles) {
-            const rad = deg * Math.PI / 180;
-            pathPoints.push(new THREE.Vector3(
-                L1 + bendR * Math.sin(rad),
-                baseRadius,
-                -bendR + bendR * Math.cos(rad)
-            ));
-        }
-        const l2_dist = geo_linear_2.x;
-        const lastArc = pathPoints[pathPoints.length - 1];
-        for (let d of l2_dist) {
-            pathPoints.push(new THREE.Vector3(
-                lastArc.x + d * Math.cos(totalRad),
-                baseRadius,
-                lastArc.z - d * Math.sin(totalRad)
-            ));
-        }
-        globalPathPoints = pathPoints;
+        const curve = new THREE.CatmullRomCurve3(pathPointsArray);
 
-        globalCurve = new THREE.CatmullRomCurve3(pathPoints);
+        const maxAngle = geo_arc.x[geo_arc.x.length - 1] || 0;
+        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${maxAngle.toFixed(1)}°`;
 
         const tubeSegments = 160; 
         const radialSegments = 40;
-        const tubeGeom = new THREE.TubeGeometry(globalCurve, tubeSegments, baseRadius, radialSegments, false);
+        const tubeGeom = new THREE.TubeGeometry(curve, tubeSegments, baseRadius, radialSegments, false);
         
         tubeGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tubeGeom.attributes.position.count * 3), 3));
         const colorsAttribute = tubeGeom.attributes.color;
@@ -172,8 +152,8 @@
             const pct = segmentIndex / tubeSegments;
             const dataIndex = Math.min(Math.floor(pct * totalPointsCount), totalPointsCount - 1);
 
-            const scaleX = combinedMainAxis[dataIndex] / (baseRadius * 2);
-            const scaleY = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
+            const scaleX = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
+            const scaleY = combinedMainAxis[dataIndex] / (baseRadius * 2);
 
             let nx = normalsAttribute.getX(i);
             let ny = normalsAttribute.getY(i);
@@ -216,8 +196,10 @@
         highlightRing.visible = false; 
         scene.add(highlightRing);
 
-        camera.position.set(L1 + 350, 350, 350);
-        controls.target.set(L1, 0, -bendR);
+        const midIdx = Math.floor(pathPointsArray.length / 2);
+        const targetPos = pathPointsArray[midIdx] || new THREE.Vector3(0, 0, 0);
+        camera.position.set(targetPos.x + 320, targetPos.y + 280, targetPos.z + 320);
+        controls.target.copy(targetPos);
         controls.update();
 
         function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
@@ -228,8 +210,9 @@
         const target = document.getElementById("plot");
         target.innerHTML = "";
 
-        // Reverse Linear 1 data for graphing (unchanged)
-        function reverseArray(arr) { return arr.slice().reverse(); }
+        function reverseArray(arr) {
+            return arr.slice().reverse();
+        }
 
         const linear1_rev = {
             x: reverseArray(geo_linear_1.x),
@@ -256,38 +239,7 @@
             }
         }
 
-        // --- Compute cumulative distance along the physical path for each physical index ---
-        const totalPts = globalPathPoints.length;
-        const cumDist = [0];
-        for (let i = 1; i < totalPts; i++) {
-            const dx = globalPathPoints[i].x - globalPathPoints[i-1].x;
-            const dy = globalPathPoints[i].y - globalPathPoints[i-1].y;
-            const dz = globalPathPoints[i].z - globalPathPoints[i-1].z;
-            cumDist.push(cumDist[i-1] + Math.sqrt(dx*dx + dy*dy + dz*dz));
-        }
-        const totalLength = cumDist[cumDist.length - 1];
-
-        // Map graph index to physical progress (0..1) using cumulative distance
-        const N1 = geo_linear_1.x.length;
-        const N2 = geo_arc.x.length;
-        const N3 = geo_linear_2.x.length;
-        const graphToPhysicalProgress = [];
-        for (let i = 0; i < comb.x.length; i++) {
-            let physIdx;
-            if (i < N1) {
-                // reversed linear1: graph index i -> physical index i (forward)
-                physIdx = i;
-            } else if (i < N1 + N2) {
-                physIdx = N1 + (i - N1);
-            } else {
-                physIdx = N1 + N2 + (i - (N1 + N2));
-            }
-            const dist = cumDist[physIdx];
-            const progress = dist / totalLength;
-            graphToPhysicalProgress.push(progress);
-        }
-
-        // --- The plot remains exactly as before ---
+        // Create uPlot
         plotInstance = new uPlot({
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
@@ -302,26 +254,37 @@
             hooks: {
                 setCursor: [u => {
                     const i = u.cursor.idx;
-                    if (i == null || !globalCurve || !highlightRing) {
+                    if (i == null || !highlightRing) {
                         if (highlightRing) highlightRing.visible = false;
                         return;
                     }
-
                     document.getElementById("hoverInfo").innerHTML = 
                         `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
+                    
+                    // Physical progress based on graph index (0 to 1 monotonic)
+                    const progress = i / (totalPointsCount - 1);
+                    const physIdx = Math.round(progress * (pathPointsArray.length - 1));
+                    if (physIdx < 0 || physIdx >= pathPointsArray.length) return;
+                    
+                    // Position directly at the physical point
+                    const position = pathPointsArray[physIdx];
+                    highlightRing.position.copy(position);
 
-                    const progress = graphToPhysicalProgress[i];
-                    const position = globalCurve.getPointAt(progress);
-                    const tangent = globalCurve.getTangentAt(progress);
+                    // Compute tangent from neighbours
+                    const prevIdx = Math.max(0, physIdx - 1);
+                    const nextIdx = Math.min(pathPointsArray.length - 1, physIdx + 1);
+                    const pPrev = pathPointsArray[prevIdx];
+                    const pNext = pathPointsArray[nextIdx];
+                    const tangent = new THREE.Vector3().subVectors(pNext, pPrev).normalize();
+                    if (tangent.length() > 0) {
+                        highlightRing.lookAt(position.clone().add(tangent));
+                    }
 
                     highlightRing.visible = true;
-                    highlightRing.position.copy(position);
-                    highlightRing.lookAt(position.clone().add(tangent));
 
-                    // Ring scaling: use the same physical index derived from progress
-                    const physIdx = Math.round(progress * (totalPts - 1));
-                    const scaleX = combinedMainAxis[physIdx] / (11.0 * 2);
-                    const scaleY = combinedSecondaryAxis[physIdx] / (11.0 * 2);
+                    // Ring scaling: use the actual cross-section radius from data
+                    const scaleX = combinedSecondaryAxis[physIdx] / (baseRadius * 2);
+                    const scaleY = combinedMainAxis[physIdx] / (baseRadius * 2);
                     highlightRing.scale.set(scaleX, scaleY, 1.0);
                 }]
             }
