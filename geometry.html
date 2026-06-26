@@ -56,11 +56,15 @@
     let totalPointsCount = 0;
     let camera, renderer, scene, plotInstance, controls;
     let pathPointsArray = [];
-    let baseRadius = 11.0;  // will be set from data
+    let baseRadius = 11.0;
 
     let combinedMainAxis = [];
     let combinedSecondaryAxis = [];
     let combinedCollapse = [];
+
+    // Moderate gain to make ovality visible but not extreme
+    const GAIN = 1.5;
+    const CLAMP = 0.3; // prevent scale factors from going below 0.7 or above 1.3
 
     function normalize(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
@@ -68,22 +72,49 @@
     }
 
     function startAnalysis(id) {
+        disposeScene();
+
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
-            // Load data
             combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
             combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
             combinedCollapse = [...geo_linear_1.collapse, ...geo_arc.collapse, ...geo_linear_2.collapse];
             totalPointsCount = combinedMainAxis.length;
 
-            // Use the exported cross-section radius
             baseRadius = window.cross_section_radius || 11.0;
 
             init3D();
             initPlot(); 
         };
         document.head.appendChild(script);
+    }
+
+    function disposeScene() {
+        if (controls) {
+            controls.dispose();
+            controls = null;
+        }
+        if (renderer) {
+            renderer.dispose();
+            renderer.domElement.remove();
+            renderer = null;
+        }
+        if (scene) {
+            scene.traverse(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            });
+            scene = null;
+        }
+        const container = document.getElementById("viewer3d");
+        container.innerHTML = "";
     }
 
     function toggleOpacity() {
@@ -103,20 +134,25 @@
 
     function init3D() {
         const container = document.getElementById("viewer3d");
-        container.innerHTML = "";
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.domElement.style.touchAction = 'none';
         container.appendChild(renderer.domElement);
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
         
-        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+        // Lighting (improved)
+        const ambientLight = new THREE.AmbientLight(0x404060, 0.6);
+        scene.add(ambientLight);
         const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
         dirLight.position.set(200, 400, 300);
         scene.add(dirLight);
-        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
+        const fillLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+        fillLight.position.set(-200, 100, -300);
+        scene.add(fillLight);
+        scene.add(new THREE.GridHelper(1000, 50, 0x555555, 0x222222));
 
         const pts = window.tube_path_3d;
         if (!pts || !pts.x || pts.x.length < 2) {
@@ -152,16 +188,26 @@
             const pct = segmentIndex / tubeSegments;
             const dataIndex = Math.min(Math.floor(pct * totalPointsCount), totalPointsCount - 1);
 
-            const scaleX = combinedSecondaryAxis[dataIndex] / (baseRadius * 2);
-            const scaleY = combinedMainAxis[dataIndex] / (baseRadius * 2);
+            const nominalR = baseRadius;
+            const sec = combinedSecondaryAxis[dataIndex];
+            const main = combinedMainAxis[dataIndex];
+
+            const devX = (sec - nominalR) / nominalR;
+            const devY = (main - nominalR) / nominalR;
+
+            // Apply gain and clamp to avoid extreme deformations
+            let scaleX = 1 + devX * GAIN;
+            let scaleY = 1 + devY * GAIN;
+            scaleX = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleX));
+            scaleY = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleY));
 
             let nx = normalsAttribute.getX(i);
             let ny = normalsAttribute.getY(i);
             let vx = posAttribute.getX(i);
             let vy = posAttribute.getY(i);
 
-            posAttribute.setX(i, vx + (scaleX - 1) * nx * baseRadius);
-            posAttribute.setY(i, vy + (scaleY - 1) * ny * baseRadius);
+            posAttribute.setX(i, vx + (scaleX - 1) * nx * nominalR);
+            posAttribute.setY(i, vy + (scaleY - 1) * ny * nominalR);
 
             const currentAbsCollapse = Math.abs(combinedCollapse[dataIndex] || 0);
             const normalizedDeviation = (currentAbsCollapse - minCollapse) / collapseRange;
@@ -174,8 +220,8 @@
 
         tubeMaterial = new THREE.MeshStandardMaterial({ 
             vertexColors: true, 
-            metalness: 0.7,
-            roughness: 0.3,
+            metalness: 0.3,
+            roughness: 0.6,
             transparent: true, 
             opacity: 0.45, 
             side: THREE.DoubleSide
@@ -186,7 +232,7 @@
 
         const wireframe = new THREE.LineSegments(
             new THREE.WireframeGeometry(tubeGeom),
-            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 })
+            new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.08 })
         );
         tubeMesh.add(wireframe);
 
@@ -239,7 +285,6 @@
             }
         }
 
-        // Create uPlot
         plotInstance = new uPlot({
             width: target.clientWidth, height: 500,
             scales: { x: { time: false }, y: { range: [0, 1.1] } },
@@ -261,16 +306,13 @@
                     document.getElementById("hoverInfo").innerHTML = 
                         `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
                     
-                    // Physical progress based on graph index (0 to 1 monotonic)
                     const progress = i / (totalPointsCount - 1);
                     const physIdx = Math.round(progress * (pathPointsArray.length - 1));
                     if (physIdx < 0 || physIdx >= pathPointsArray.length) return;
                     
-                    // Position directly at the physical point
                     const position = pathPointsArray[physIdx];
                     highlightRing.position.copy(position);
 
-                    // Compute tangent from neighbours
                     const prevIdx = Math.max(0, physIdx - 1);
                     const nextIdx = Math.min(pathPointsArray.length - 1, physIdx + 1);
                     const pPrev = pathPointsArray[prevIdx];
@@ -282,9 +324,14 @@
 
                     highlightRing.visible = true;
 
-                    // Ring scaling: use the actual cross-section radius from data
-                    const scaleX = combinedSecondaryAxis[physIdx] / (baseRadius * 2);
-                    const scaleY = combinedMainAxis[physIdx] / (baseRadius * 2);
+                    // Ring scaling – match the tube deformation
+                    const nominalR = baseRadius;
+                    const sec = combinedSecondaryAxis[physIdx];
+                    const main = combinedMainAxis[physIdx];
+                    let scaleX = 1 + ((sec - nominalR) / nominalR) * GAIN;
+                    let scaleY = 1 + ((main - nominalR) / nominalR) * GAIN;
+                    scaleX = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleX));
+                    scaleY = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleY));
                     highlightRing.scale.set(scaleX, scaleY, 1.0);
                 }]
             }
