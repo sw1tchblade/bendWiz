@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND - Integrated Dashboard</title>
+    <title>TubeBEND - True Data Dashboard</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -20,7 +20,7 @@
         button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
         .toggle-btn { background: #333; font-size: 11px; padding: 4px 10px; }
         .toggle-btn:hover { background: #444; }
-        input { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
+        input[type="number"] { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
     </style>
 </head>
 <body>
@@ -35,7 +35,7 @@
 <div class="dashboard-grid">
     <div class="panel">
         <div class="panel-header">
-            <h2>3D Construction</h2>
+            <h2>3D True Data Construction</h2>
             <button class="toggle-btn" id="opacityBtn">Make Opaque</button>
         </div>
         <div id="viewer3d"></div>
@@ -51,70 +51,92 @@
     let currentId = params.get("prc") || "79";
     document.getElementById("prcInput").value = currentId;
 
-    let highlightRing; 
-    let tubeMaterial;
-    let totalPointsCount = 0;
+    let highlightRing, tubeMaterial;
     let camera, renderer, scene, plotInstance, controls;
-    let pathPointsArray = [];
-    let baseRadius = 11.0;
 
-    let combinedMainAxis = [];
-    let combinedSecondaryAxis = [];
-    let combinedCollapse = [];
-
-    // Moderate gain to make ovality visible but not extreme
-    const GAIN = 1.5;
-    const CLAMP = 0.3; // prevent scale factors from going below 0.7 or above 1.3
+    let meshMainAxis = [];
+    let meshSecAxis = [];
+    let meshCollapse = [];
+    let N1 = 0, N2 = 0, N3 = 0, totalPointsCount = 0;
+    
+    let globalShiftX = 0;
+    let globalShiftZ = 0;
+    
+    let cleanPathX = [];
+    let cleanPathY = [];
+    let cleanPathZ = [];
 
     function normalize(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
     }
 
-    function startAnalysis(id) {
-        disposeScene();
+    // Averages out duplicate overlapping points to avert Gimbal lock tearing
+    function getSmoothTangent(s, pathX, pathY, pathZ, total) {
+        const center = new THREE.Vector3(pathX[s], pathY[s], pathZ[s]);
+        
+        let nxtIdx = s + 1;
+        let pNxt = null;
+        while(nxtIdx < total) {
+            const temp = new THREE.Vector3(pathX[nxtIdx], pathY[nxtIdx], pathZ[nxtIdx]);
+            if (temp.distanceToSquared(center) > 0.001) { pNxt = temp; break; }
+            nxtIdx++;
+        }
+        
+        let prvIdx = s - 1;
+        let pPrv = null;
+        while(prvIdx >= 0) {
+            const temp = new THREE.Vector3(pathX[prvIdx], pathY[prvIdx], pathZ[prvIdx]);
+            if (temp.distanceToSquared(center) > 0.001) { pPrv = temp; break; }
+            prvIdx--;
+        }
 
+        let tangent = new THREE.Vector3();
+        if (pNxt && pPrv) {
+            tangent.subVectors(pNxt, pPrv).normalize();
+        } else if (pNxt) {
+            tangent.subVectors(pNxt, center).normalize();
+        } else if (pPrv) {
+            tangent.subVectors(center, pPrv).normalize();
+        } else {
+            tangent.set(1, 0, 0);
+        }
+        return tangent;
+    }
+
+    function startAnalysis(id) {
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
-            combinedMainAxis = [...geo_linear_1.main_axis, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
-            combinedSecondaryAxis = [...geo_linear_1.secondary_axis, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
-            combinedCollapse = [...geo_linear_1.collapse, ...geo_arc.collapse, ...geo_linear_2.collapse];
-            totalPointsCount = combinedMainAxis.length;
+            N1 = geo_linear_1.x.length;
+            N2 = geo_arc.x.length;
+            N3 = geo_linear_2.x.length;
+            
+            // L1 arrays are firmly reversed. The stress from the bend now maps correctly to the bend coordinate.
+            const l1_main_rev = [...geo_linear_1.main_axis].reverse();
+            const l1_sec_rev = [...geo_linear_1.secondary_axis].reverse();
+            const l1_col_rev = [...geo_linear_1.collapse].reverse();
 
-            baseRadius = window.cross_section_radius || 11.0;
+            meshMainAxis = [...l1_main_rev, ...geo_arc.main_axis, ...geo_linear_2.main_axis];
+            meshSecAxis = [...l1_sec_rev, ...geo_arc.secondary_axis, ...geo_linear_2.secondary_axis];
+            meshCollapse = [...l1_col_rev, ...geo_arc.collapse, ...geo_linear_2.collapse];
+            totalPointsCount = meshMainAxis.length;
 
-            init3D();
-            initPlot(); 
+            if (N2 > 0 && window.tube_path_3d) {
+                const arcMidIdx = N1 + Math.floor(N2 / 2);
+                globalShiftX = -window.tube_path_3d.x[arcMidIdx];
+                globalShiftZ = -window.tube_path_3d.z[arcMidIdx];
+            }
+
+            const displayAngle = window.bend_angle_deg !== undefined ? window.bend_angle_deg : 45.0;
+            document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${displayAngle.toFixed(2)}°`;
+
+            setTimeout(() => {
+                init3D();
+                initPlot();
+            }, 30);
         };
         document.head.appendChild(script);
-    }
-
-    function disposeScene() {
-        if (controls) {
-            controls.dispose();
-            controls = null;
-        }
-        if (renderer) {
-            renderer.dispose();
-            renderer.domElement.remove();
-            renderer = null;
-        }
-        if (scene) {
-            scene.traverse(child => {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(m => m.dispose());
-                    } else {
-                        child.material.dispose();
-                    }
-                }
-            });
-            scene = null;
-        }
-        const container = document.getElementById("viewer3d");
-        container.innerHTML = "";
     }
 
     function toggleOpacity() {
@@ -126,7 +148,7 @@
             btn.textContent = "Make Translucent";
         } else {
             tubeMaterial.transparent = true;
-            tubeMaterial.opacity = 0.45;
+            tubeMaterial.opacity = 0.75;
             btn.textContent = "Make Opaque";
         }
         tubeMaterial.needsUpdate = true;
@@ -134,118 +156,158 @@
 
     function init3D() {
         const container = document.getElementById("viewer3d");
+        container.innerHTML = "";
         scene = new THREE.Scene();
+        
         camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
-        renderer.domElement.style.touchAction = 'none';
         container.appendChild(renderer.domElement);
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
-        
-        // Lighting (improved)
-        const ambientLight = new THREE.AmbientLight(0x404060, 0.6);
-        scene.add(ambientLight);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
         dirLight.position.set(200, 400, 300);
         scene.add(dirLight);
-        const fillLight = new THREE.DirectionalLight(0x4488ff, 0.3);
-        fillLight.position.set(-200, 100, -300);
-        scene.add(fillLight);
-        scene.add(new THREE.GridHelper(1000, 50, 0x555555, 0x222222));
 
-        const pts = window.tube_path_3d;
-        if (!pts || !pts.x || pts.x.length < 2) {
-            container.innerHTML = "<div style='color:red; padding:20px;'>No 3D path data available</div>";
-            return;
+        const baseRadius = window.cross_section_radius || 11.0;
+        
+        const floorGrid = new THREE.GridHelper(1000, 50, 0x333333, 0x222222);
+        floorGrid.position.y = -baseRadius - 1.0; 
+        scene.add(floorGrid);
+
+        cleanPathX = window.tube_path_3d.x.map(x => x + globalShiftX);
+        cleanPathY = window.tube_path_3d.y.slice(); 
+        cleanPathZ = window.tube_path_3d.z.map(z => z + globalShiftZ);
+
+        // Deduplication to prevent overlapping vertices at index boundaries
+        for (let i = 1; i < totalPointsCount - 1; i++) {
+            const distSq = Math.pow(cleanPathX[i] - cleanPathX[i-1], 2) + 
+                           Math.pow(cleanPathY[i] - cleanPathY[i-1], 2) + 
+                           Math.pow(cleanPathZ[i] - cleanPathZ[i-1], 2);
+            
+            if (distSq < 0.001) {
+                cleanPathX[i] = (cleanPathX[i-1] + cleanPathX[i+1]) / 2.0;
+                cleanPathY[i] = (cleanPathY[i-1] + cleanPathY[i+1]) / 2.0;
+                cleanPathZ[i] = (cleanPathZ[i-1] + cleanPathZ[i+1]) / 2.0;
+            }
         }
 
-        pathPointsArray = [];
-        for (let i = 0; i < pts.x.length; i++) {
-            pathPointsArray.push(new THREE.Vector3(pts.x[i], pts.y[i], pts.z[i]));
+        const radialSegments = 72;
+        const geometry = new THREE.BufferGeometry();
+        const vertexCount = totalPointsCount * (radialSegments + 1);
+        const positions = new Float32Array(vertexCount * 3);
+        const colors = new Float32Array(vertexCount * 3);
+        const indices = [];
+
+        const baseColor = new THREE.Color(0x00a896); 
+        const deformColor = new THREE.Color(0xff3344); 
+
+        for (let s = 0; s < totalPointsCount; s++) {
+            const center = new THREE.Vector3(cleanPathX[s], cleanPathY[s], cleanPathZ[s]);
+
+            let tangent = getSmoothTangent(s, cleanPathX, cleanPathY, cleanPathZ, totalPointsCount);
+
+            let r_vec = new THREE.Vector3(0, 1, 0);
+            if (Math.abs(tangent.dot(r_vec)) > 0.9) r_vec.set(1, 0, 0);
+            const normalX = new THREE.Vector3().crossVectors(tangent, r_vec).normalize();
+            const normalY = new THREE.Vector3().crossVectors(tangent, normalX).normalize();
+
+            const isArc = (s >= N1 && s < N1 + N2);
+
+            let m_val = meshMainAxis[s];
+            if (m_val == null || isNaN(m_val)) m_val = baseRadius * 2;
+            let s_val = meshSecAxis[s];
+            if (s_val == null || isNaN(s_val)) s_val = baseRadius * 2;
+            let c_val = meshCollapse[s];
+            if (c_val == null || isNaN(c_val)) c_val = 0.0;
+
+            const radiusX = s_val / 2.0; 
+            const radiusY = m_val / 2.0;
+
+            const offsetX = baseRadius - radiusX;
+            const adjustedCenterX = center.x + (normalX.x * offsetX);
+            const adjustedCenterY = center.y + (normalX.y * offsetX);
+            const adjustedCenterZ = center.z + (normalX.z * offsetX);
+
+            for (let r = 0; r <= radialSegments; r++) {
+                const theta = (r / radialSegments) * Math.PI * 2;
+                
+                let collapseDeform = 0;
+                let innerMask = 0;
+
+                // Wrinkles are strictly applied ONLY to the arc section. Straight legs remain perfectly flush.
+                if (isArc) {
+                    innerMask = Math.pow(Math.max(0, -Math.cos(theta)), 3); 
+                    collapseDeform = innerMask * Math.abs(c_val);
+                }
+                
+                const currentRadX = Math.max(0.1, radiusX - collapseDeform);
+                const currentRadY = Math.max(0.1, radiusY - collapseDeform); 
+
+                const posX = adjustedCenterX + (currentRadX * Math.cos(theta) * normalX.x) + (currentRadY * Math.sin(theta) * normalY.x);
+                const posY = adjustedCenterY + (currentRadX * Math.cos(theta) * normalX.y) + (currentRadY * Math.sin(theta) * normalY.y);
+                const posZ = adjustedCenterZ + (currentRadX * Math.cos(theta) * normalX.z) + (currentRadY * Math.sin(theta) * normalY.z);
+
+                const vIdx = (s * (radialSegments + 1) + r) * 3;
+                positions[vIdx] = posX;
+                positions[vIdx + 1] = posY;
+                positions[vIdx + 2] = posZ;
+
+                const mixedColor = baseColor.clone();
+                if (isArc && innerMask > 0) {
+                    const deformIntensity = Math.min(Math.abs(c_val) / (baseRadius * 0.05), 1.0);
+                    mixedColor.lerp(deformColor, deformIntensity * innerMask);
+                }
+                
+                colors[vIdx] = mixedColor.r;
+                colors[vIdx + 1] = mixedColor.g;
+                colors[vIdx + 2] = mixedColor.b;
+            }
         }
-        const curve = new THREE.CatmullRomCurve3(pathPointsArray);
 
-        const maxAngle = geo_arc.x[geo_arc.x.length - 1] || 0;
-        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${maxAngle.toFixed(1)}°`;
-
-        const tubeSegments = 160; 
-        const radialSegments = 40;
-        const tubeGeom = new THREE.TubeGeometry(curve, tubeSegments, baseRadius, radialSegments, false);
-        
-        tubeGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tubeGeom.attributes.position.count * 3), 3));
-        const colorsAttribute = tubeGeom.attributes.color;
-        const posAttribute = tubeGeom.attributes.position;
-        const normalsAttribute = tubeGeom.attributes.normal;
-
-        const absCollapseArr = combinedCollapse.map(v => Math.abs(v));
-        const maxCollapse = Math.max(...absCollapseArr);
-        const minCollapse = Math.min(...absCollapseArr);
-        const collapseRange = maxCollapse - minCollapse || 1;
-        
-        for (let i = 0; i < posAttribute.count; i++) {
-            const segmentIndex = Math.floor(i / (radialSegments + 1));
-            const pct = segmentIndex / tubeSegments;
-            const dataIndex = Math.min(Math.floor(pct * totalPointsCount), totalPointsCount - 1);
-
-            const nominalR = baseRadius;
-            const sec = combinedSecondaryAxis[dataIndex];
-            const main = combinedMainAxis[dataIndex];
-
-            const devX = (sec - nominalR) / nominalR;
-            const devY = (main - nominalR) / nominalR;
-
-            // Apply gain and clamp to avoid extreme deformations
-            let scaleX = 1 + devX * GAIN;
-            let scaleY = 1 + devY * GAIN;
-            scaleX = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleX));
-            scaleY = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleY));
-
-            let nx = normalsAttribute.getX(i);
-            let ny = normalsAttribute.getY(i);
-            let vx = posAttribute.getX(i);
-            let vy = posAttribute.getY(i);
-
-            posAttribute.setX(i, vx + (scaleX - 1) * nx * nominalR);
-            posAttribute.setY(i, vy + (scaleY - 1) * ny * nominalR);
-
-            const currentAbsCollapse = Math.abs(combinedCollapse[dataIndex] || 0);
-            const normalizedDeviation = (currentAbsCollapse - minCollapse) / collapseRange;
-            const baseColor = new THREE.Color(0x00ffcc); 
-            const warningColor = new THREE.Color(0xff3333); 
-            colorsAttribute.setXYZ(i, baseColor.r, baseColor.g, baseColor.b);
+        for (let s = 0; s < totalPointsCount - 1; s++) {
+            for (let r = 0; r < radialSegments; r++) {
+                const p0 = s * (radialSegments + 1) + r;
+                const p1 = p0 + 1;
+                const p2 = (s + 1) * (radialSegments + 1) + r;
+                const p3 = p2 + 1;
+                indices.push(p0, p1, p2);
+                indices.push(p1, p3, p2);
+            }
         }
-        
-        tubeGeom.computeVertexNormals();
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
 
         tubeMaterial = new THREE.MeshStandardMaterial({ 
             vertexColors: true, 
-            metalness: 0.3,
-            roughness: 0.6,
+            metalness: 0.4,
+            roughness: 0.4,
             transparent: true, 
-            opacity: 0.45, 
+            opacity: 0.75, 
             side: THREE.DoubleSide
         });
         
-        const tubeMesh = new THREE.Mesh(tubeGeom, tubeMaterial);
+        const tubeMesh = new THREE.Mesh(geometry, tubeMaterial);
         scene.add(tubeMesh);
 
         const wireframe = new THREE.LineSegments(
-            new THREE.WireframeGeometry(tubeGeom),
-            new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.08 })
+            new THREE.WireframeGeometry(geometry),
+            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 })
         );
         tubeMesh.add(wireframe);
 
-        const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.3, 0.4, 8, 32);
+        const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.4, 0.5, 8, 32);
         const trackerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
         highlightRing = new THREE.Mesh(trackerGeom, trackerMat);
         highlightRing.visible = false; 
         scene.add(highlightRing);
 
-        const midIdx = Math.floor(pathPointsArray.length / 2);
-        const targetPos = pathPointsArray[midIdx] || new THREE.Vector3(0, 0, 0);
-        camera.position.set(targetPos.x + 320, targetPos.y + 280, targetPos.z + 320);
-        controls.target.copy(targetPos);
+        camera.position.set(0, 350, 0.1); 
+        controls.target.set(0, 0, 0);
         controls.update();
 
         function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
@@ -256,22 +318,20 @@
         const target = document.getElementById("plot");
         target.innerHTML = "";
 
-        function reverseArray(arr) {
-            return arr.slice().reverse();
-        }
-
-        const linear1_rev = {
-            x: reverseArray(geo_linear_1.x),
-            secondary_axis: reverseArray(geo_linear_1.secondary_axis),
-            main_axis: reverseArray(geo_linear_1.main_axis),
-            out_of_roundness: reverseArray(geo_linear_1.out_of_roundness),
-            collapse: reverseArray(geo_linear_1.collapse),
+        let count = 0;
+        const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
+        
+        // Graph arrays natively match the 3D arrays because both use the reversed L1 data.
+        const l1_rev = {
+            x: [...geo_linear_1.x].reverse(),
+            secondary_axis: [...geo_linear_1.secondary_axis].reverse(),
+            main_axis: [...geo_linear_1.main_axis].reverse(),
+            out_of_roundness: [...geo_linear_1.out_of_roundness].reverse(),
+            collapse: [...geo_linear_1.collapse].reverse(),
             section_name: geo_linear_1.section_name
         };
 
-        const sections = [linear1_rev, geo_arc, geo_linear_2];
-        let count = 0;
-        const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
+        const sections = [l1_rev, geo_arc, geo_linear_2];
 
         for (let s of sections) {
             const len = s.x.length;
@@ -292,9 +352,9 @@
             series: [
                 {}, 
                 { label: "Secondary", stroke: "red", width: 2 }, 
-                { label: "Main Axis", stroke: "blue", width: 2 }, 
+                { label: "Main Axis", stroke: "blue", width: 2, dash: [5, 5] }, 
                 { label: "Out of Roundness", stroke: "green", width: 2 }, 
-                { label: "Collapse", stroke: "purple", width: 2, dash: [8, 5] }
+                { label: "Collapse", stroke: "purple", width: 2, dash: [5, 5] }
             ],
             hooks: {
                 setCursor: [u => {
@@ -303,58 +363,67 @@
                         if (highlightRing) highlightRing.visible = false;
                         return;
                     }
+
                     document.getElementById("hoverInfo").innerHTML = 
                         `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
-                    
-                    const progress = i / (totalPointsCount - 1);
-                    const physIdx = Math.round(progress * (pathPointsArray.length - 1));
-                    if (physIdx < 0 || physIdx >= pathPointsArray.length) return;
-                    
-                    const position = pathPointsArray[physIdx];
-                    highlightRing.position.copy(position);
 
-                    const prevIdx = Math.max(0, physIdx - 1);
-                    const nextIdx = Math.min(pathPointsArray.length - 1, physIdx + 1);
-                    const pPrev = pathPointsArray[prevIdx];
-                    const pNext = pathPointsArray[nextIdx];
-                    const tangent = new THREE.Vector3().subVectors(pNext, pPrev).normalize();
-                    if (tangent.length() > 0) {
-                        highlightRing.lookAt(position.clone().add(tangent));
+                    // Perfect 1:1 Sync. Index 'i' corresponds directly to physical coordinate 'i'. No backward jumping.
+                    let physIdx = i;
+
+                    if (cleanPathX && cleanPathX[physIdx] !== undefined) {
+                        highlightRing.visible = true;
+                        
+                        const center = new THREE.Vector3(cleanPathX[physIdx], cleanPathY[physIdx], cleanPathZ[physIdx]);
+
+                        let tangent = getSmoothTangent(physIdx, cleanPathX, cleanPathY, cleanPathZ, totalPointsCount);
+                        
+                        let normalX = new THREE.Vector3(1, 0, 0);
+                        let normalY = new THREE.Vector3(0, 1, 0);
+
+                        if (tangent.lengthSq() > 0) {
+                            let r_vec = new THREE.Vector3(0, 1, 0);
+                            if (Math.abs(tangent.dot(r_vec)) > 0.9) r_vec.set(1, 0, 0);
+                            normalX = new THREE.Vector3().crossVectors(tangent, r_vec).normalize();
+                            normalY = new THREE.Vector3().crossVectors(tangent, normalX).normalize();
+                            
+                            const matrix = new THREE.Matrix4();
+                            matrix.makeBasis(normalX, normalY, tangent);
+                            highlightRing.quaternion.setFromRotationMatrix(matrix);
+                        }
+
+                        const baseRadius = window.cross_section_radius || 11.0;
+                        
+                        let m_val = meshMainAxis[physIdx];
+                        if (m_val == null || isNaN(m_val)) m_val = baseRadius * 2;
+                        let s_val = meshSecAxis[physIdx];
+                        if (s_val == null || isNaN(s_val)) s_val = baseRadius * 2;
+
+                        const trackerRadiusX = s_val / 2.0;
+                        const trackerRadiusY = m_val / 2.0;
+                        const trackerOffsetX = baseRadius - trackerRadiusX;
+                        
+                        const adjustedCenter = center.clone().add(normalX.clone().multiplyScalar(trackerOffsetX));
+                        
+                        highlightRing.position.copy(adjustedCenter);
+                        highlightRing.scale.set(trackerRadiusX / baseRadius, trackerRadiusY / baseRadius, 1.0);
+                    } else {
+                        highlightRing.visible = false;
                     }
-
-                    highlightRing.visible = true;
-
-                    // Ring scaling – match the tube deformation
-                    const nominalR = baseRadius;
-                    const sec = combinedSecondaryAxis[physIdx];
-                    const main = combinedMainAxis[physIdx];
-                    let scaleX = 1 + ((sec - nominalR) / nominalR) * GAIN;
-                    let scaleY = 1 + ((main - nominalR) / nominalR) * GAIN;
-                    scaleX = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleX));
-                    scaleY = Math.max(1 - CLAMP, Math.min(1 + CLAMP, scaleY));
-                    highlightRing.scale.set(scaleX, scaleY, 1.0);
                 }]
             }
         }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
     }
 
-    // Resize handling
     window.addEventListener('resize', () => {
         const container3d = document.getElementById("viewer3d");
         if (camera && renderer && container3d) {
-            const width = container3d.clientWidth;
-            const height = container3d.clientHeight;
-            camera.aspect = width / height;
+            camera.aspect = container3d.clientWidth / container3d.clientHeight;
             camera.updateProjectionMatrix();
-            renderer.setSize(width, height);
+            renderer.setSize(container3d.clientWidth, container3d.clientHeight);
         }
-
         const containerPlot = document.getElementById("plot");
         if (plotInstance && containerPlot) {
-            plotInstance.setSize({
-                width: containerPlot.clientWidth,
-                height: 500
-            });
+            plotInstance.setSize({ width: containerPlot.clientWidth, height: 500 });
         }
     });
 
