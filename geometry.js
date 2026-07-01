@@ -1,165 +1,77 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>TubeBEND - Slim Ring Analysis</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
-    
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; margin: 0; padding: 20px; overflow: hidden; }
-        .header-controls { display: flex; align-items: center; gap: 20px; background: #1a1a1a; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #333; }
-        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: calc(100vh - 120px); }
-        .panel { background: #151515; border-radius: 10px; padding: 20px; border: 1px solid #2a2a2a; display: flex; flex-direction: column; }
-        #viewer3d { flex-grow: 1; background: #000; border-radius: 5px; cursor: crosshair; }
-        #hoverInfo { font-family: 'Consolas', monospace; color: white; margin-bottom: 10px; font-size: 14px; min-height: 1.5em; border-bottom: 1px solid #333; }
-        h2 { margin: 0 0 10px 0; font-size: 12px; color: #00a896; text-transform: uppercase; }
-        button { background: #00a896; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: 600; }
-        input { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
-    </style>
-</head>
-<body>
+const GeometryEngine = {
+    processData: function(geoL1, geoArc, geoL2) {
+        const l1_main_rev = [...geoL1.main_axis].reverse();
+        const l1_sec_rev = [...geoL1.secondary_axis].reverse();
+        const l1_col_rev = [...geoL1.collapse].reverse();
+        const l1_oor_rev = [...geoL1.out_of_roundness].reverse();
+        const l1_x_rev = [...geoL1.x].reverse();
 
-<div class="header-controls">
-    <label><b>PROCESS ID:</b></label>
-    <input type="number" id="prcInput" min="1" max="318">
-    <button id="goBtn">Analyze Process</button>
-    <div id="statusLabel" style="margin-left: auto; color: #00a896; font-weight: bold;"></div>
-</div>
+        return {
+            main: [...l1_main_rev, ...geoArc.main_axis, ...geoL2.main_axis],
+            sec: [...l1_sec_rev, ...geoArc.secondary_axis, ...geoL2.secondary_axis],
+            col: [...l1_col_rev, ...geoArc.collapse, ...geoL2.collapse],
+            oor: [...l1_oor_rev, ...geoArc.out_of_roundness, ...geoL2.out_of_roundness],
+            totalPoints: geoL1.x.length + geoArc.x.length + geoL2.x.length,
+            l1_rev: {
+                x: l1_x_rev,
+                secondary_axis: l1_sec_rev,
+                main_axis: l1_main_rev,
+                out_of_roundness: l1_oor_rev,
+                collapse: l1_col_rev,
+                section_name: geoL1.section_name
+            }
+        };
+    },
 
-<div class="dashboard-grid">
-    <div class="panel">
-        <h2>3D Slim-Ring Reconstruction</h2>
-        <div id="viewer3d"></div>
-    </div>
-    <div class="panel">
-        <div id="hoverInfo">Hover over graph to inspect metrics</div>
-        <div id="plot"></div>
-    </div>
-</div>
+    buildPath: function(geoL1, geoArc, geoL2) {
+        const calculatedPositions = [];
+        const calculatedTangents = [];
 
-<script>
-    const params = new URLSearchParams(window.location.search);
-    let currentId = params.get("prc") || "79";
-    document.getElementById("prcInput").value = currentId;
+        const L1 = geoL1.x[geoL1.x.length - 1];
+        const ArcL = geoArc.x[geoArc.x.length - 1];
+        const L2 = geoL2.x[geoL2.x.length - 1];
+        
+        // REMOVED: Trigonometric approximation math blocks completely deleted
+        // FIXED: Using raw physics sensor property directly from data payload
+        const nativeAngleDeg = window.bend_angle_deg !== undefined ? window.bend_angle_deg : 45.0;
+        const angleRad = nativeAngleDeg * Math.PI / 180;
+        const bendR = ArcL / angleRad;
 
-    function normalize(arr) {
+        const len1 = geoL1.x.length;
+        for (let i = 0; i < len1; i++) {
+            const dist = (i / (len1 - 1)) * L1;
+            calculatedPositions.push(new THREE.Vector3(dist, 0, 0));
+            calculatedTangents.push(new THREE.Vector3(1, 0, 0));
+        }
+
+        const lenArc = geoArc.x.length;
+        for (let i = 0; i < lenArc; i++) {
+            const r = (geoArc.x[i] / ArcL) * angleRad;
+            const pos = new THREE.Vector3(L1 + bendR * Math.sin(r), 0, -bendR + bendR * Math.cos(r));
+            const tan = new THREE.Vector3(Math.cos(r), 0, -Math.sin(r)).normalize();
+            calculatedPositions.push(pos);
+            calculatedTangents.push(tan);
+        }
+
+        const len2 = geoL2.x.length;
+        const arcEndPos = calculatedPositions[calculatedPositions.length - 1];
+        const exitTan = calculatedTangents[calculatedTangents.length - 1];
+        for (let i = 0; i < len2; i++) {
+            const dist = (i / (len2 - 1)) * L2;
+            const pos = new THREE.Vector3(
+                arcEndPos.x + dist * exitTan.x,
+                0,
+                arcEndPos.z + dist * exitTan.z
+            );
+            calculatedPositions.push(pos);
+            calculatedTangents.push(exitTan);
+        }
+
+        return { positions: calculatedPositions, tangents: calculatedTangents, angleDeg: nativeAngleDeg };
+    },
+
+    normalize: function(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
     }
-
-    async function checkAndLoad(id) {
-        const stlPath = `website_data/stl_models/SIM_V12-${id}_geometry_after_springback.stl`;
-        try {
-            const res = await fetch(stlPath, { method: 'HEAD' });
-            if (res.ok) {
-                const script = document.createElement("script");
-                script.src = `website_data/geometry_data/geo${id}.js`;
-                script.onload = () => { init3D(); initPlot(); };
-                document.head.appendChild(script);
-            } else {
-                document.getElementById("statusLabel").textContent = `MISSING STL: ID ${id}`;
-                document.getElementById("viewer3d").innerHTML = "<div style='color:#444; padding:50px; text-align:center;'>Analysis blocked: No STL found for this ID.</div>";
-            }
-        } catch (e) { console.error(e); }
-    }
-
-    function init3D() {
-        const container = document.getElementById("viewer3d");
-        container.innerHTML = "";
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(container.clientWidth, container.clientHeight);
-        container.appendChild(renderer.domElement);
-
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-        scene.add(new THREE.GridHelper(1000, 50, 0x333333, 0x222222));
-
-        const tubeR = window.tube_radius || 11.15;
-        const bendR = 40; 
-        const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
-        const ArcL = geo_arc.x[geo_arc.x.length - 1];
-        const L2 = geo_linear_2.x[geo_linear_2.x.length - 1];
-        const angleRad = ArcL / bendR;
-        
-        document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${(angleRad * 180 / Math.PI).toFixed(1)}°`;
-
-        // Updated for Slimmer Appearance
-        const spacing = 0.4;
-        const thickness = 0.08; 
-        const ringGeom = new THREE.TorusGeometry(tubeR, thickness, 8, 32);
-
-        function drawRings(curve, color) {
-            const len = curve.getLength();
-            const count = Math.floor(len / spacing);
-            for(let i=0; i <= count; i++) {
-                const p = curve.getPointAt(i / count);
-                const t = curve.getTangentAt(i / count);
-                const ring = new THREE.Mesh(ringGeom, new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }));
-                ring.position.copy(p);
-                ring.lookAt(p.clone().add(t));
-                scene.add(ring);
-            }
-        }
-
-        drawRings(new THREE.LineCurve3(new THREE.Vector3(0, tubeR, 0), new THREE.Vector3(L1, tubeR, 0)), 0xffffff);
-        
-        const arcPts = [];
-        for(let i=0; i <= 50; i++) {
-            const r = (i / 50) * angleRad;
-            arcPts.push(new THREE.Vector3(L1 + bendR * Math.sin(r), tubeR, -bendR + bendR * Math.cos(r)));
-        }
-        drawRings(new THREE.CatmullRomCurve3(arcPts), 0xffff00);
-
-        const last = arcPts[arcPts.length-1];
-        drawRings(new THREE.LineCurve3(last, new THREE.Vector3(last.x + L2 * Math.cos(angleRad), tubeR, last.z - L2 * Math.sin(angleRad))), 0xffffff);
-
-        const pivot = new THREE.Vector3(L1, 0, -bendR);
-        camera.position.set(L1 + 350, 350, 350);
-        controls.target.copy(pivot);
-        controls.update();
-
-        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
-        animate();
-    }
-
-    function initPlot() {
-        const target = document.getElementById("plot");
-        target.innerHTML = "";
-        const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
-        let count = 0;
-        [geo_linear_1, geo_arc, geo_linear_2].forEach(s => {
-            s.x.forEach((v, i) => {
-                comb.x.push(count++);
-                comb.sec.push(s.secondary_axis[i] || 0);
-                comb.main.push(s.main_axis[i] || 0);
-                comb.oor.push(s.out_of_roundness[i] || 0);
-                comb.col.push(s.collapse[i] || 0);
-                comb.labs.push(s.section_name);
-            });
-        });
-
-        new uPlot({
-            width: target.clientWidth, height: 500,
-            scales: { x: { time: false }, y: { range: [0, 1.1] } },
-            axes: [{ label: "Index", stroke: "#fff" }, { label: "Value", stroke: "#fff" }],
-            series: [{}, { label: "Sec", stroke: "red" }, { label: "Main", stroke: "blue" }, { label: "OOR", stroke: "green" }, { label: "Col", stroke: "purple" }],
-            hooks: {
-                setCursor: [u => {
-                    const i = u.cursor.idx;
-                    if (i == null) return;
-                    document.getElementById("hoverInfo").innerHTML = `<b>${comb.labs[i]}</b> | S: ${comb.sec[i].toFixed(2)} | M: ${comb.main[i].toFixed(2)} | O: ${comb.oor[i].toFixed(4)} | C: ${comb.col[i].toFixed(3)}`;
-                }]
-            }
-        }, [comb.x, normalize(comb.sec), normalize(comb.main), normalize(comb.oor), normalize(comb.col)], target);
-    }
-
-    document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
-    checkAndLoad(currentId);
-</script>
-</body>
-</html>
+};
