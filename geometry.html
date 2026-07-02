@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TubeBEND Continuous Ovality Lab - Individual Rings View</title>
+    <title>TubeBEND Continuous Ovality Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -67,9 +67,8 @@
     document.getElementById("prcInput").value = currentId;
 
     let highlightRing; 
-    let tubeGroup; 
+    let tubeMaterial;
     let camera, renderer, scene, plotInstance;
-    let globalOpacity = 0.45;
     
     let engineData = {};
     let pathData = {};
@@ -81,7 +80,6 @@
             engineData = GeometryEngine.processData(geo_linear_1, geo_arc, geo_linear_2);
             pathData = GeometryEngine.buildPath(geo_linear_1, geo_arc, geo_linear_2);
             
-            // REMOVED: Total ring count text removed from status label template string
             document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${pathData.angleDeg.toFixed(2)}°`;
 
             init3D();    
@@ -91,24 +89,18 @@
     }
 
     function toggleOpacity() {
-        if (!tubeGroup) return;
+        if (!tubeMaterial) return;
         const btn = document.getElementById("opacityBtn");
-        
-        if (globalOpacity < 1.0) {
-            globalOpacity = 1.0;
+        if (tubeMaterial.transparent) {
+            tubeMaterial.transparent = false;
+            tubeMaterial.opacity = 1.0;
             btn.textContent = "Make Translucent";
         } else {
-            globalOpacity = 0.45;
+            tubeMaterial.transparent = true;
+            tubeMaterial.opacity = 0.45;
             btn.textContent = "Make Opaque";
         }
-        
-        tubeGroup.traverse((child) => {
-            if (child.isLine) {
-                child.material.transparent = (globalOpacity < 1.0);
-                child.material.opacity = globalOpacity;
-                child.material.needsUpdate = true;
-            }
-        });
+        tubeMaterial.needsUpdate = true;
     }
 
     function init3D() {
@@ -121,12 +113,13 @@
         container.appendChild(renderer.domElement);
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        
         scene.add(new THREE.AmbientLight(0xffffff, 0.4));
         
         const baseRadius = window.tube_radius || 11.0;
 
         const floorGrid = new THREE.GridHelper(1000, 50, 0x333333, 0x222222);
-        floorGrid.position.y = 0;
+        floorGrid.position.y = -baseRadius;
         scene.add(floorGrid);
 
         const headlight = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -134,49 +127,65 @@
         camera.add(headlight);
         scene.add(camera);
 
-        tubeGroup = new THREE.Group();
+        const tubeSegments = engineData.totalPoints - 1; 
         const radialSegments = 40;
+        
+        const pathSpline = new THREE.CatmullRomCurve3(pathData.positions);
+        pathSpline.curveType = 'centripetal';
+        
+        const tubeGeom = new THREE.TubeGeometry(pathSpline, tubeSegments, baseRadius, radialSegments, false);
+        
+        tubeGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tubeGeom.attributes.position.count * 3), 3));
+        const colorsAttribute = tubeGeom.attributes.color;
+        const posAttribute = tubeGeom.attributes.position;
 
-        const liftHeight = baseRadius + 5.0;
+        for (let i = 0; i < posAttribute.count; i++) {
+            const segmentIndex = Math.floor(i / (radialSegments + 1));
+            const radialIndex = i % (radialSegments + 1);
+            const dataIndex = Math.min(segmentIndex, engineData.totalPoints - 1);
 
-        for (let d = 0; d < engineData.totalPoints; d++) {
-            const ringPoints = [];
+            const scaleX = engineData.main[dataIndex] / (baseRadius * 2);
+            const scaleY = engineData.sec[dataIndex] / (baseRadius * 2);
+            const v = (radialIndex / radialSegments) * Math.PI * 2;
             
-            const scaleX = engineData.main[d] / 2.0; 
-            const scaleY = engineData.sec[d] / 2.0;  
-            
-            const pos = pathData.positions[d];
-            const tangent = pathData.tangents[d];
+            const pos = pathData.positions[dataIndex];
+            const tangent = pathData.tangents[dataIndex];
 
             const normX = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
             const normY = new THREE.Vector3(0, 1, 0);
 
-            for (let r = 0; r <= radialSegments; r++) {
-                const v = (r / radialSegments) * Math.PI * 2;
-                const offsetX = Math.cos(v) * scaleX;
-                const offsetY = Math.sin(v) * scaleY;
+            const offsetX = baseRadius * Math.cos(v) * scaleX;
+            const offsetY = baseRadius * Math.sin(v) * scaleY;
 
-                const vertex = new THREE.Vector3(
-                    pos.x + offsetX * normX.x,
-                    pos.y + offsetY * normY.y + liftHeight,
-                    pos.z + offsetX * normX.z
-                );
-                ringPoints.push(vertex);
-            }
+            posAttribute.setX(i, pos.x + offsetX * normX.x);
+            posAttribute.setY(i, pos.y + offsetY * normY.y);
+            posAttribute.setZ(i, pos.z + offsetX * normX.z);
 
-            const ringGeom = new THREE.BufferGeometry().setFromPoints(ringPoints);
-            const ringMat = new THREE.LineBasicMaterial({
-                color: 0x00ffcc,
-                transparent: (globalOpacity < 1.0),
-                opacity: globalOpacity,
-                linewidth: 1
-            });
-
-            const ringLine = new THREE.LineLoop(ringGeom, ringMat);
-            tubeGroup.add(ringLine);
+            const baseColor = new THREE.Color(0x00ffcc); 
+            colorsAttribute.setXYZ(i, baseColor.r, baseColor.g, baseColor.b);
         }
         
-        scene.add(tubeGroup);
+        tubeGeom.computeVertexNormals();
+
+        tubeMaterial = new THREE.MeshPhysicalMaterial({ 
+            vertexColors: true, 
+            metalness: 0.6,
+            roughness: 0.15,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.1,
+            transparent: true, 
+            opacity: 0.45, 
+            side: THREE.DoubleSide
+        });
+        
+        const tubeMesh = new THREE.Mesh(tubeGeom, tubeMaterial);
+        scene.add(tubeMesh);
+
+        const wireframe = new THREE.LineSegments(
+            new THREE.WireframeGeometry(tubeGeom),
+            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 })
+        );
+        tubeMesh.add(wireframe);
 
         const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.3, 0.4, 8, 32);
         const trackerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
@@ -186,8 +195,7 @@
 
         const L1 = geo_linear_1.x[geo_linear_1.x.length - 1];
         camera.position.set(L1 + 320, 280, 320);
-        
-        controls.target.set(L1, liftHeight, -50);
+        controls.target.set(L1, 0, -50);
         controls.update();
 
         function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
@@ -241,11 +249,8 @@
                     const position = pathData.positions[i];
                     const tangent = pathData.tangents[i];
                     
-                    const baseRadius = window.tube_radius || 11.0;
-                    const liftHeight = baseRadius + 5.0;
-
-                    highlightRing.position.set(position.x, position.y + liftHeight, position.z);
-                    highlightRing.lookAt(new THREE.Vector3(position.x, position.y + liftHeight, position.z).add(tangent));
+                    highlightRing.position.copy(position);
+                    highlightRing.lookAt(position.clone().add(tangent));
 
                     const scaleX = engineData.main[i] / (11.0 * 2);
                     const scaleY = engineData.sec[i] / (11.0 * 2);
