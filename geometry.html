@@ -23,7 +23,6 @@
         .toggle-btn:hover { background: #444; }
         input { background: #222; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 65px; }
 
-        /* Force graph legend to a single line */
         .u-legend {
             display: flex !important;
             flex-wrap: nowrap !important;
@@ -32,10 +31,7 @@
             gap: 8px !important;
             font-size: 13px !important; 
         }
-
-        .u-legend .u-series {
-            padding: 0 4px !important; 
-        }
+        .u-legend .u-series { padding: 0 4px !important; }
     </style>
 </head>
 <body>
@@ -113,7 +109,6 @@
         container.appendChild(renderer.domElement);
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        
         scene.add(new THREE.AmbientLight(0xffffff, 0.4));
         
         const baseRadius = window.tube_radius || 11.0;
@@ -206,7 +201,7 @@
         const target = document.getElementById("plot");
         target.innerHTML = "";
 
-        const sections = [engineData.l1_rev, geo_arc, geo_linear_2];
+        const sections = [engineData.l1_rev, engineData.arc_sliced, geo_linear_2];
         let count = 0;
         const comb = { x: [], sec: [], main: [], oor: [], col: [], labs: [] };
 
@@ -245,7 +240,6 @@
                         `<b>${comb.labs[i]}</b> | Secondary: ${comb.sec[i].toFixed(2)} | Main Axis: ${comb.main[i].toFixed(2)} | Out of Roundness: ${comb.oor[i].toFixed(4)} | Collapse: ${comb.col[i].toFixed(3)}`;
                     
                     highlightRing.visible = true;
-                    
                     const position = pathData.positions[i];
                     const tangent = pathData.tangents[i];
                     
@@ -280,7 +274,6 @@
     });
 
     document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
-    
     document.getElementById("prcInput").addEventListener("keypress", function(event) {
         if (event.key === "Enter") {
             event.preventDefault();
