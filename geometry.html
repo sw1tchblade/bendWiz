@@ -64,7 +64,7 @@
 
     let highlightRing; 
     let tubeMaterial;
-    let camera, renderer, scene, plotInstance;
+    let camera, renderer, scene, plotInstance, controls;
     
     let engineData = {};
     let pathData = {};
@@ -108,10 +108,11 @@
         renderer.setSize(container.clientWidth, container.clientHeight);
         container.appendChild(renderer.domElement);
 
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
         scene.add(new THREE.AmbientLight(0xffffff, 0.4));
         
-        const baseRadius = window.tube_radius || 11.0;
+        // Use cross_section_radius if available, otherwise fallback to tube_radius or 11.0
+        const baseRadius = window.cross_section_radius || window.tube_radius || 11.0;
 
         const floorGrid = new THREE.GridHelper(1000, 50, 0x333333, 0x222222);
         floorGrid.position.y = -baseRadius;
@@ -123,8 +124,8 @@
         scene.add(camera);
 
         const tubeSegments = engineData.totalPoints - 1; 
-        const radialSegments = 40;
-        
+        const radialSegments = 64;  // increased for smoother appearance
+
         const pathSpline = new THREE.CatmullRomCurve3(pathData.positions);
         pathSpline.curveType = 'centripetal';
         
@@ -176,11 +177,7 @@
         const tubeMesh = new THREE.Mesh(tubeGeom, tubeMaterial);
         scene.add(tubeMesh);
 
-        const wireframe = new THREE.LineSegments(
-            new THREE.WireframeGeometry(tubeGeom),
-            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 })
-        );
-        tubeMesh.add(wireframe);
+        // --- Wireframe removed to eliminate the distracting line ---
 
         const trackerGeom = new THREE.TorusGeometry(baseRadius + 0.3, 0.4, 8, 32);
         const trackerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
@@ -246,8 +243,10 @@
                     highlightRing.position.copy(position);
                     highlightRing.lookAt(position.clone().add(tangent));
 
-                    const scaleX = engineData.main[i] / (11.0 * 2);
-                    const scaleY = engineData.sec[i] / (11.0 * 2);
+                    // Use baseRadius from the data (if available)
+                    const baseR = window.cross_section_radius || window.tube_radius || 11.0;
+                    const scaleX = engineData.main[i] / (baseR * 2);
+                    const scaleY = engineData.sec[i] / (baseR * 2);
                     highlightRing.scale.set(scaleX, scaleY, 1.0);
                 }]
             }
