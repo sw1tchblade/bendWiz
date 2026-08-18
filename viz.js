@@ -1,3 +1,27 @@
+// ============================================================
+// viz.js – The Main Dashboard Controller
+// ============================================================
+// This file controls the main dashboard (index.html).
+// It does three main things:
+//   1. Loads the sensor data for a given experiment.
+//   2. Draws five separate graphs (Bend Die, Collet, Mandrel, Pressure Die, Clamp Die).
+//   3. Synchronises the video playback with the mouse position on the graphs.
+//
+// The data comes from website_data/sensor_data/dta[ID].js.
+// Each dta file contains time‑series arrays for all sensors.
+// ============================================================
+
+
+// ============================================================
+// 1. Global variables and configuration
+// ============================================================
+// MIN_PROC / MAX_PROC define the valid range of experiment IDs.
+// GLOBAL_ACTUAL_TIME stores the time axis for the current experiment.
+// GLOBAL_DISPLAY_TIME is a normalised version (0–1000) for plotting.
+// ALL_PLOTS holds references to all uPlot instances (for syncing).
+// VIDEO_ENABLED tracks whether the video is available and loaded.
+// ============================================================
+
 const d = document;
 const wl = window.location;
 const proc = d.getElementById("procsel");
@@ -25,6 +49,13 @@ if (geoBtn) {
 	});
 }
 
+// ============================================================
+// 2. Process ID management
+// ============================================================
+// getProcFromURL() reads the 'prc' parameter from the URL.
+// goToProcess() updates the URL and reloads the page.
+// The input box and the "Go" button trigger these functions.
+// ============================================================
 function getProcFromURL() {
 	const params = new URLSearchParams(wl.search);
 
@@ -67,6 +98,12 @@ proc.addEventListener("keydown", (e) => {
 	}
 });
 
+// ============================================================
+// 3. Asynchronous data loading
+// ============================================================
+// loadScript() dynamically injects a <script> tag.
+// This is how we load the dta[ID].js file without blocking the UI.
+// ============================================================
 function loadScript(url, onload, onerror) {
 	const script = d.createElement("script");
 	script.type = "text/javascript";
@@ -80,6 +117,12 @@ function loadScript(url, onload, onerror) {
 	d.head.appendChild(script);
 }
 
+// ============================================================
+// 4. Graph styling and layout
+// ============================================================
+// injectStyles() adds custom CSS for the graph panels.
+// This includes the legend, tooltip, and grid layout.
+// ============================================================
 function injectStyles() {
 	const old = d.getElementById("custom-plot-styles");
 	if (old) old.remove();
@@ -174,6 +217,14 @@ function injectStyles() {
 	d.head.appendChild(style);
 }
 
+// ============================================================
+// 5. Data processing helpers
+// ============================================================
+// numericArray() converts an array to numbers (or NaN).
+// normalizeSeries() scales a series to [0, 1] (or 0.5 if constant).
+// normalizeTimeAxis() scales the time axis to [0, 1000].
+// getTimeAxis() picks the best available time source.
+// ============================================================
 function numericArray(arr) {
 	if (!Array.isArray(arr)) return [];
 	return arr.map((x) => {
@@ -318,6 +369,17 @@ function syncPlotsToIndex(idx) {
 	});
 }
 
+// ============================================================
+// 6. Building the graphs
+// ============================================================
+// createPanel(title, defs, plots) creates one uPlot panel.
+//   - title: the name of the tool (e.g., "Bend Die").
+//   - defs: an array of sensor definitions (label, unit, color, raw data).
+//   - plots: an array that stores all uPlot instances for syncing.
+//
+// getSeriesDefs() defines all the sensors for each tool.
+//   - It maps the raw arrays from the dta file to labels and colours.
+// ============================================================
 function createPanel(title, defs, plots) {
 	const panel = d.createElement("div");
 	panel.className = "plot-panel";
@@ -463,6 +525,19 @@ function getSeriesDefs() {
 	};
 }
 
+// ============================================================
+// 7. Cursor tracking and video synchronisation
+// ============================================================
+// When you hover over a graph:
+//   - The tooltip shows the raw values at that point.
+//   - The video seeks to the corresponding time (if available).
+//   - All other graphs are synced to the same x‑position.
+//
+// syncVideoToIndex(idx, togglePlayback) moves the video to the
+//   time that corresponds to the graph index.
+// syncPlotsToIndex(idx) moves all plots to the same x‑position.
+// ============================================================
+
 function setInfoBlock() {
 	const infoText = d.getElementById("infotext");
 	if (!infoText) return;
@@ -479,6 +554,12 @@ function setInfoBlock() {
 	infoText.textContent = extra;
 }
 
+// ============================================================
+// 8. Video fallback
+// ============================================================
+// setVideoSource() tries to load a video file named [ID].mov.
+// If that fails, it falls back to 79.mov (a default video).
+// ============================================================
 function setVideoSource() {
 	if (!vid) return;
 
@@ -533,6 +614,13 @@ function bindVideoTracking() {
 	};
 }
 
+// ============================================================
+// 9. Main entry point
+// ============================================================
+// plotData() is called after the dta file is loaded.
+// It sets up the time axis, creates all five graph panels,
+// and starts the video tracking.
+// ============================================================
 function plotData() {
 	injectStyles();
 	setVideoSource();
@@ -574,10 +662,11 @@ function plotData() {
 	bindVideoTracking();
 }
 
+// Start the whole process by loading the dta file for the current ID.
 loadScript(`website_data/sensor_data/dta${proc.value}.js`, plotData, function () {
     const infoText = d.getElementById("infotext");
     const msg = `Data file for process ${proc.value} is unavailable or corrupted.`;
-    
+     // Error handling: if the dta file fails to load, show a message.
     if (infoText) {
         infoText.textContent = msg;
         infoText.style.color = "red";
