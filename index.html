@@ -82,7 +82,32 @@
 		<div style="position: absolute; top: 10px; right: 20px; font-size: 14px; font-weight: bold;">
     Source: <a href="https://github.com/zeyneddinoz/tubebend" target="_blank" style="color: #067a6a; text-decoration: underline;">TubeBEND</a>
 		</div>
+			<!--
+  ============================================================
+  index.html – The Main Dashboard
+  ============================================================
+  This is the entry point for the TubeBEND dashboard.
+
+  What the user sees:
+    - A process ID input (1–318) to select an experiment.
+    - A video player (if a .mov file exists for that ID).
+    - A "Geometric Data" button that opens the 3D viewer (geometry.html).
+    - Five time‑series graphs (Bend Die, Collet, Mandrel, Pressure Die, Clamp Die).
+
+  How it works:
+    1. The user enters a process ID (or uses the default, 79).
+    2. The page loads viz.js, which then loads the corresponding dta[ID].js file.
+    3. The graphs are drawn using uPlot.
+    4. Hovering over a graph moves the video to the corresponding time.
+    5. Clicking the "Geometric Data" button opens the 3D viewer in a new tab.
+-->
+
+<!--
+  The header bar: process ID input, "Machine Diagram" info box,
+  and the "Geometric Data" button.
+-->
 		<div id="toprow">
+			<!-- Video player for the selected process -->
 			<div class="topblk"><video id="v0" tabindex="0", autobuffer width="320" height="180" muted webkit-playsinline playsinline>
 		        <source id="vid" type='video/mp4;codecs="avc1.42E01E, mp4a.40.2"'></source>
 		  </video></div>
@@ -96,11 +121,17 @@
 					value="79"
 				/> <a class="info"
 					>Machine Diagram<span class="ttip"><img src="overview.jpg"/></span></a
-				><button id="geoBtn" type="button" class="btn-3d">Geometric Data</button></pre>
+				>
+					<!-- The "Geometric Data" button opens the 3D viewer -->
+					<button id="geoBtn" type="button" class="btn-3d">Geometric Data</button></pre>
 
 				<pre id="infotext"></pre>
 			</div>
 		</div>
+		<!--
+  The graphs are inserted here by viz.js.
+  The <script src="viz.js"></script> tag loads the main controller.
+-->
 		<script src="viz.js"></script>
 		<div style="clear: both"></div>
 	</body>
