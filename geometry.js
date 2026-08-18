@@ -1,4 +1,30 @@
+// ============================================================
+// GeometryEngine – The data processor for tube geometry
+// ============================================================
+// This object contains all the logic to:
+//   1. Process the raw linear‑arc‑linear data into a single continuous array.
+//   2. Build the 3D centreline path from the measured angles and radii.
+//   3. Normalise arrays for plotting.
+//
+// It is used by geometry.html to prepare the data before rendering.
+// ============================================================
 const GeometryEngine = {
+    // ============================================================
+    // processData(geoL1, geoArc, geoL2)
+    // ============================================================
+    // What it does:
+    //   - Reverses Linear 1 data so that the graph flows smoothly from the start.
+    //   - Removes the first point of the arc to avoid duplication at the joint.
+    //   - Concatenates Linear 1 (reversed), Arc (sliced), and Linear 2 into one array.
+    //   - Computes the "true collapse" using the formula:
+    //         (main_axis / 2) - baseRadius + collapse
+    //     This gives the actual inward shift of the cross‑section.
+    //
+    // Why this matters:
+    //   - The raw data from the pickle file is split into three sections.
+    //   - For the graph to show a continuous line, we need to reorder and stitch them.
+    //   - The true collapse is used later to deform the tube only on the inner side.
+    // ============================================================
     processData: function(geoL1, geoArc, geoL2) {
         // Fallback to 11.0 if not defined globally
         const baseR = window.cross_section_radius || window.tube_radius || 11.0; 
@@ -58,7 +84,25 @@ const GeometryEngine = {
             }
         };
     },
-
+     // ============================================================
+    // buildPath(geoL1, geoArc, geoL2)
+    // ============================================================
+    // What it does:
+    //   - Builds the 3D centreline of the tube.
+    //   - Linear 1: straight line along the X‑axis.
+    //   - Arc: circular bend derived from the bending angle and radius.
+    //   - Linear 2: straight line continuing in the exit direction of the arc.
+    //
+    // The key steps:
+    //   1. The total bending angle is read from the data (or defaults to 45°).
+    //   2. The bend radius is calculated as: ArcL / angleRad.
+    //   3. The arc is constructed point by point using sin/cos.
+    //   4. A small padding (1 mm) is added to avoid overlapping vertices.
+    //
+    // Why this matters:
+    //   - This path is the backbone of the 3D tube.
+    //   - Without it, we would not know where to place each cross‑section.
+    // ============================================================
     buildPath: function(geoL1, geoArc, geoL2) {
         const calculatedPositions = [];
         const calculatedTangents = [];
@@ -105,7 +149,17 @@ const GeometryEngine = {
 
         return { positions: calculatedPositions, tangents: calculatedTangents, angleDeg: nativeAngleDeg };
     },
-
+    // ============================================================
+    // normalize(arr)
+    // ============================================================
+    // What it does:
+    //   - Scales an array to the range [0, 1].
+    //   - If all values are the same, it returns an array of zeros.
+    //
+    // Why this matters:
+    //   - The graph shows all metrics on the same scale (0 to 1.1).
+    //   - Normalisation makes it easy to compare different metrics visually.
+    // ============================================================
     normalize: function(arr) {
         const min = Math.min(...arr), max = Math.max(...arr);
         return (max - min === 0) ? arr.map(() => 0) : arr.map(v => (v - min) / (max - min));
