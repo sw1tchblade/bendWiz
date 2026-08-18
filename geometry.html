@@ -1,3 +1,29 @@
+<!--
+  ============================================================
+  geometry.html – The 3D Tube Viewer
+  ============================================================
+  What this file does:
+  - It loads the geometry data for a chosen experiment (e.g., geo79.js).
+  - It builds a 3D scene using Three.js.
+  - It reconstructs the tube shape from the measured main axis, secondary axis,
+    out‑of‑roundness, and collapse data.
+  - It also draws a small yellow ring that follows your mouse cursor on the graph,
+    so you can see exactly which point along the tube you are inspecting.
+
+  How it fits into the bigger picture:
+  - The user picks a process ID (1–318) from the input box.
+  - The script fetches the corresponding geo[ID].js file from the server.
+  - It then calls GeometryEngine.processData() and GeometryEngine.buildPath()
+    (both defined in geometry.js) to prepare the data.
+  - Finally, it renders the 3D tube and the graph side by side.
+  ============================================================
+-->
+
+<!--
+  The main dashboard layout: two panels side by side.
+  Left panel: 3D viewer.
+  Right panel: graph (uPlot) + hover info.
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -47,6 +73,11 @@
     <div class="panel">
         <div class="panel-header">
             <h2>3D Reconstruction</h2>
+            <!--
+              Opacity toggle: makes the tube solid or translucent.
+              This helps when you want to see the internal structure
+              or the wireframe underneath.
+            -->
             <button class="toggle-btn" id="opacityBtn" onclick="toggleOpacity()">Make Opaque</button>
         </div>
         <div id="viewer3d"></div>
@@ -58,26 +89,41 @@
 </div>
 
 <script>
+      // ============================================================
+    // 1. Get the process ID from the URL (e.g., ?prc=79)
+    // ============================================================
     const params = new URLSearchParams(window.location.search);
     let currentId = params.get("prc") || "79";
     document.getElementById("prcInput").value = currentId;
+    // ============================================================
+    // 2. Global variables that persist across updates
+    // ============================================================
 
-    let highlightRing; 
-    let tubeMaterial;
+    let highlightRing;  // The yellow ring that tracks the mouse position on the tube
+    let tubeMaterial;   // The material used for the tube (so we can change opacity)
     let camera, renderer, scene, plotInstance, controls;
     
     let engineData = {};
     let pathData = {};
 
+    // ============================================================
+    // 3. Start the analysis: load the data and build the visualisation
+    // ============================================================
+
     function startAnalysis(id) {
+        // Dynamically load the geometry data file for this experiment.
+        // Example: website_data/geometry_data/geo79.js
         const script = document.createElement("script");
         script.src = `website_data/geometry_data/geo${id}.js`;
         script.onload = () => {
+            // Process the raw data into a format suitable for plotting and 3D reconstruction.
             engineData = GeometryEngine.processData(geo_linear_1, geo_arc, geo_linear_2);
             pathData = GeometryEngine.buildPath(geo_linear_1, geo_arc, geo_linear_2);
-            
+
+            // Update the status label with the bending angle for this experiment.
             document.getElementById("statusLabel").textContent = `EXP_${currentId} | Angle: ${pathData.angleDeg.toFixed(2)}°`;
 
+             // Build the 3D scene and the graph.
             init3D();    
             initPlot();  
         };
@@ -98,8 +144,28 @@
         }
         tubeMaterial.needsUpdate = true;
     }
-
+    // ============================================================
+    // 4. Build the 3D scene
+    // ============================================================
     function init3D() {
+        // --- Setup scene, camera, renderer ---
+        // This is the standard Three.js boilerplate.
+        // The camera is positioned to look at the middle of the tube.
+        // --- Lighting ---
+        // Ambient light provides base illumination.
+        // A directional light from the camera adds depth.
+        // --- Path reconstruction ---
+        // The tube's centreline is built from the linear and arc sections.
+        // The positions and tangents come from GeometryEngine.buildPath().
+        // --- Tube geometry ---
+        // A TubeGeometry is created along the centreline.
+        // Each cross‑section is then deformed using the measured main and secondary axes.
+        // This is where the "wrinkle" effect is applied – only on the inner side of the bend.
+        // --- Tracking ring ---
+        // A small yellow ring (highlightRing) is added to the scene.
+        // It is hidden by default and becomes visible when you hover over the graph.
+        // --- Controls ---
+        // OrbitControls allow the user to rotate, pan, and zoom around the 3D model.
         const container = document.getElementById("viewer3d");
         container.innerHTML = "";
         scene = new THREE.Scene();
@@ -196,8 +262,19 @@
         function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
         animate();
     }
+    // ============================================================
+    // 5. Build the graph (uPlot)
+    // ============================================================
 
     function initPlot() {
+         // The graph shows four metrics along the tube:
+        //   - Secondary axis (red)
+        //   - Main axis (yellow)
+        //   - Out‑of‑roundness (green)
+        //   - Collapse (purple, dashed)
+        // The x‑axis is the path index (0 to total number of points).
+        // When you hover over the graph, the yellow ring moves to the corresponding
+        // point on the 3D tube, and the hover info box shows the raw values.
         const target = document.getElementById("plot");
         target.innerHTML = "";
 
@@ -255,6 +332,13 @@
         }, [comb.x, GeometryEngine.normalize(comb.sec), GeometryEngine.normalize(comb.main), GeometryEngine.normalize(comb.oor), GeometryEngine.normalize(comb.col)], target);
     }
 
+     // ============================================================
+    // 6. Handle window resizing
+    // ============================================================
+    // When the browser window is resized, the 3D canvas and the graph
+    // are resized to fit the new dimensions.
+    // ============================================================
+    
     window.addEventListener('resize', () => {
         const container3d = document.getElementById("viewer3d");
         if (camera && renderer && container3d) {
@@ -273,7 +357,14 @@
             });
         }
     });
+    // ============================================================
+    // 7. Event listeners
+    // ============================================================
+    // The "Analyze Process" button reloads the page with the new process ID.
+    // Pressing Enter in the input box does the same.
+    // ============================================================
 
+    // Start the analysis with the current ID.
     document.getElementById("goBtn").onclick = () => window.location.href = `geometry.html?prc=${document.getElementById("prcInput").value}`;
     document.getElementById("prcInput").addEventListener("keypress", function(event) {
         if (event.key === "Enter") {
